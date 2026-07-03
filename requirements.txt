@@ -1,0 +1,58 @@
+# Core Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# HTTP Client for LLM API
+httpx>=0.25.0
+
+# Redis for job persistence
+redis>=5.0.0
+
+# Form data parsing (required for File uploads)
+python-multipart>=0.0.6
+
+# Document Processing
+python-docx>=1.1.0
+lxml>=4.9.0
+
+# MySQL for glossary storage
+pymysql>=1.1.0
+
+# Database (for future extensions)
+sqlalchemy>=2.0.0
+alembic>=1.13.0
+
+# Logging
+loguru>=0.7.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+httpx>=0.25.0
+
+# MongoDB for auth storage
+motor>=3.3.0
+
+# JWT authentication
+python-jose[cryptography]>=3.3.0
+
+# LDAP authentication
+ldap3>=2.9.1
+
+# Password hashing (bcrypt 5.x is compatible)
+bcrypt>=5.0.0
+
+# Language detection for glossary validation (optional, 170MB with models)
+lingua-language-detector>=2.0.0
+
+# Type Checking
+mypy>=1.8.0
+types-requests>=2.31.0
+
+# Development Tools
+black>=23.12.0
+isort>=5.13.0
+flake8>=7.0.0
