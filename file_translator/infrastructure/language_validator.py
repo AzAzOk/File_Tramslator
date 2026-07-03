@@ -12,7 +12,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 try:
-    from lingua import Language, LanguageDetector
+    from lingua import Language, LanguageDetectorBuilder
 
     LINGUA_AVAILABLE = True
 except ImportError:
@@ -72,12 +72,12 @@ if LINGUA_AVAILABLE:
     def _get_detector():
         global _DETECTOR
         if _DETECTOR is None:
-            _DETECTOR = LanguageDetector.from_languages(
+            _DETECTOR = LanguageDetectorBuilder.from_languages(
                 Language.ENGLISH,
                 Language.RUSSIAN,
                 Language.SERBIAN,
                 Language.CHINESE,
-            )
+            ).build()
         return _DETECTOR
 
     _LINGUA_REV: dict[Language, str] = {
