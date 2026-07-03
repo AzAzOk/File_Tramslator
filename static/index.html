@@ -1,0 +1,2044 @@
+﻿<!DOCTYPE html>
+<html class="light" lang="ru">
+<head>
+<meta name="description" content="File Translator v2.0.0 — Переводите DOCX, DOC, XLSX и XLS файлы с помощью AI. Поддерживаются русский, английский, сербский и китайский языки.">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>File Translator v2.0.0</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0&display=swap" rel="stylesheet">
+<style>
+  /* ── Design tokens (brand: Omsk Yellow #FDBB30, Omsk Black #272415, Omsk Grey #D1D1D1) ── */
+  :root {
+    --c-primary: #FDBB30;
+    --c-primary-container: #FFD966;
+    --c-on-primary-container: #272415;
+    --c-surface: #F5F5F5;
+    --c-surface-dim: #D9D9D9;
+    --c-surface-container-low: #EEEEEE;
+    --c-surface-container: #E8E8E8;
+    --c-surface-container-high: #E2E2E2;
+    --c-surface-container-highest: #D1D1D1;
+    --c-surface-container-lowest: #FFFFFF;
+    --c-on-surface: #272415;
+    --c-on-surface-variant: #5C5C5C;
+    --c-secondary: #6B6B6B;
+    --c-secondary-fixed-dim: #D1D1D1;
+    --c-outline: #D1D1D1;
+    --c-outline-variant: #E8E8E8;
+    --c-error: #BA1A1A;
+    --c-status-success: #079455;
+    --c-background: #F8F9FF;
+    --c-inverse-surface: #272415;
+    --c-inverse-on-surface: #FFFFFF;
+  }
+  .dark {
+    --c-primary: #FDBB30;
+    --c-primary-container: #FDBB30;
+    --c-on-primary-container: #272415;
+    --c-surface: #1A1A1A;
+    --c-surface-dim: #121212;
+    --c-surface-container-low: #1E1E1E;
+    --c-surface-container: #242424;
+    --c-surface-container-high: #2E2E2E;
+    --c-surface-container-highest: #393939;
+    --c-surface-container-lowest: #0D0D0D;
+    --c-on-surface: #E8E8E8;
+    --c-on-surface-variant: #C4C4C4;
+    --c-secondary: #B8B8B8;
+    --c-secondary-fixed-dim: #3F3F3F;
+    --c-outline: #8D8D8D;
+    --c-outline-variant: #4D4D4D;
+    --c-error: #FFB4AB;
+    --c-status-success: #6CD49B;
+    --c-background: #121212;
+    --c-inverse-surface: #E8E8E8;
+    --c-inverse-on-surface: #272415;
+  }
+
+  body { font-family: 'Geist', sans-serif; }
+  .font-display { font-family: 'Space Grotesk', sans-serif; }
+  .font-mono-sm { font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+
+  .material-symbols-outlined {
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    vertical-align: middle;
+  }
+
+  /* ── Drop zone ── */
+  .drop-zone { transition: border-color .2s, background .2s; }
+  .drop-zone.drag-over {
+    border-color: var(--c-primary-container) !important;
+    background: color-mix(in srgb, var(--c-primary-container) 6%, transparent) !important;
+  }
+  .drop-zone .upload-icon { transition: transform .3s; }
+  .drop-zone:hover .upload-icon { transform: scale(1.1); }
+
+  /* ── Style toggle ── */
+  .style-btn { transition: all .15s; }
+  .style-btn.active {
+    background: white; box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    font-weight: 700; border-color: var(--c-outline-variant);
+  }
+  .dark .style-btn.active { background: var(--c-surface-container-lowest); }
+
+  /* ── Radio card ── */
+  .radio-card { transition: background .15s; cursor: pointer; }
+  .radio-card:hover { background: var(--c-surface-container-low); }
+
+  /* ── Toggle switch ── */
+  .toggle-track { transition: background .2s; }
+  .toggle-thumb { transition: transform .2s, background .2s; }
+  .toggle input:checked ~ .toggle-track { background: var(--c-primary); }
+  .toggle input:checked ~ .toggle-track .toggle-thumb {
+    transform: translateX(100%); background: white;
+  }
+
+  /* ── Fieldset reset ── */
+  fieldset { border: none; padding: 0; margin: 0; min-width: 0; }
+  .scroll-custom::-webkit-scrollbar { width: 4px; }
+  .scroll-custom::-webkit-scrollbar-track { background: transparent; }
+  .scroll-custom::-webkit-scrollbar-thumb { background: var(--c-outline-variant); border-radius: 2px; }
+
+  /* ── Hidden utility ── */
+  .hidden { display: none !important; }
+
+  /* ── Toast ── */
+  .toast { animation: slideUp .3s ease-out; }
+  @keyframes slideUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+
+  /* ── Disabled select ── */
+  .select-disabled { opacity: 0.5 !important; pointer-events: none !important; border-color: var(--c-outline-variant) !important; }
+
+  /* ── File item ── */
+  .file-item { transition: background .15s; }
+  .file-item:hover { background: var(--c-surface-container-low); }
+
+  /* ── File item progress ── */
+  .file-progress-bar {
+    height: 3px;
+    background: var(--c-outline-variant);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 6px;
+  }
+  .file-progress-fill {
+    height: 100%;
+    background: var(--c-primary);
+    border-radius: 2px;
+    transition: width 0.5s ease-out;
+    width: 0%;
+  }
+  .file-progress-fill.indeterminate {
+    width: 40% !important;
+    animation: indeterminate 1.4s ease-in-out infinite;
+  }
+  @keyframes indeterminate {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(300%); }
+  }
+  .file-progress-fill.done { background: var(--c-status-success); width: 100% !important; }
+  .file-progress-fill.error { background: var(--c-error); width: 100% !important; }
+
+  /* ── Tab navigation ── */
+  .nav-tab { transition: all .15s; cursor: pointer; user-select: none; border-bottom: 2px solid transparent; }
+  .nav-tab.active { border-bottom-color: var(--c-primary); color: var(--c-primary); }
+  .nav-tab.inactive { color: var(--c-secondary); border-bottom-color: transparent; }
+  .nav-tab.inactive:hover { color: var(--c-on-surface); }
+
+  /* ── Modal ── */
+  .modal-overlay { animation: fadeIn .2s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .modal-content { animation: scaleIn .2s ease-out; }
+  @keyframes scaleIn { from { opacity: 0; transform: scale(.95); } to { opacity: 1; transform: scale(1); } }
+
+  /* ── Glossary table ── */
+  .glossary-row { transition: background .15s; }
+  .glossary-row:hover { background: var(--c-surface-container-low); }
+  .glossary-hl { background: #fde047; color: #000; border-radius: 2px; padding: 0 2px; }
+  .dark .glossary-hl { background: #a3871c; color: inherit; }
+</style>
+</head>
+<body class="bg-[var(--c-background)] text-[var(--c-on-surface)] min-h-screen flex flex-col transition-colors duration-200">
+<noscript>
+  <div style="padding:2rem;text-align:center;background:#ba1a1a;color:white;font-family:sans-serif;">
+    <p>Для работы File Translator необходим JavaScript. Пожалуйста, включите JavaScript в вашем браузере.</p>
+  </div>
+</noscript>
+
+<!-- ═══ Top Navigation ═══ -->
+<header class="bg-[var(--c-surface)] border-b border-[var(--c-outline-variant)] sticky top-0 z-50 transition-colors">
+  <div class="max-w-[1440px] mx-auto px-6 flex items-center justify-between h-16">
+    <div class="flex items-center gap-3">
+      <span class="material-symbols-outlined text-[var(--c-primary)] text-2xl" aria-hidden="true">translate</span>
+      <a href="/" class="no-underline text-inherit"><h1 class="font-display font-bold text-lg text-[var(--c-on-surface)]">File Translator</h1></a>
+    </div>
+    <nav class="flex items-center gap-8">
+      <span id="filesTab" class="nav-tab active pb-1 text-sm font-semibold" data-tab="files">Файлы</span>
+      <span id="glossaryTab" class="nav-tab inactive pb-1 text-sm" data-tab="glossary">Глоссарий</span>
+    </nav>
+    <div class="flex items-center gap-2">
+      <button id="themeBtn" class="p-2 rounded-full hover:bg-[var(--c-surface-container-low)] transition-colors text-[var(--c-secondary)]" title="Переключить тему" aria-label="Переключить тему">
+        <span class="material-symbols-outlined" aria-hidden="true">light_mode</span>
+      </button>
+      <div id="authSection">
+        <button id="loginBtn" class="px-4 py-1.5 bg-[var(--c-primary-container)] text-[var(--c-on-primary-container)] font-bold rounded-lg hover:brightness-95 transition-all text-sm">
+          Войти
+        </button>
+        <div id="userInfo" class="hidden items-center gap-2">
+          <span id="userNameDisplay" class="text-sm font-medium text-[var(--c-on-surface)]"></span>
+          <button id="logoutBtn" class="px-3 py-1.5 border border-[var(--c-outline-variant)] text-[var(--c-secondary)] rounded-lg hover:bg-[var(--c-surface-container-low)] transition-all text-sm">
+            Выйти
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ═══ Main Content ═══ -->
+<main class="flex-1 max-w-[1440px] mx-auto w-full px-6 py-8">
+<div id="files-page">
+  <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+    <!-- ─── Left: Upload ─── -->
+    <div class="lg:col-span-7 flex flex-col gap-6">
+      <div class="bg-[var(--c-surface-container-lowest)] border border-[var(--c-outline-variant)] rounded-xl p-6 flex flex-col min-h-[420px] transition-colors">
+        <h2 class="font-display text-xl font-semibold text-[var(--c-on-surface)] flex items-center gap-2 mb-4">
+          <span class="material-symbols-outlined text-[var(--c-primary)]" aria-hidden="true">upload_file</span>
+          Загрузить файлы
+        </h2>
+
+        <!-- Drop zone -->
+        <div id="dropZone" class="drop-zone flex-1 border-2 border-dashed border-[var(--c-outline-variant)] rounded-xl flex flex-col items-center justify-center gap-4 p-8 text-center cursor-pointer" tabindex="0" aria-label="Зона загрузки файлов. Нажмите Enter или пробел для выбора файлов">
+          <div class="w-20 h-20 rounded-full bg-[var(--c-surface-container)] flex items-center justify-center upload-icon">
+            <span class="material-symbols-outlined text-[var(--c-primary)] text-4xl" aria-hidden="true">cloud_upload</span>
+          </div>
+          <div>
+            <p class="font-display text-lg font-semibold text-[var(--c-on-surface)]">Перетащите файлы сюда</p>
+            <p class="text-sm text-[var(--c-secondary)] mt-1">Поддерживаемые форматы: DOCX, DOC, XLSX, XLS</p>
+          </div>
+          <label class="inline-flex items-center gap-2 px-5 py-2.5 bg-[var(--c-primary-container)] text-[var(--c-on-primary-container)] font-bold rounded-lg cursor-pointer hover:brightness-95 transition-all active:scale-[0.97]">
+            <span class="material-symbols-outlined" aria-hidden="true">add</span>
+            Выбрать файлы
+            <input id="fileInput" type="file" multiple class="hidden" accept=".docx,.doc,.xlsx,.xls">
+          </label>
+          <p class="text-xs text-[var(--c-secondary)]">Максимальный размер: 128 MB на файл</p>
+        </div>
+
+        <!-- Files list -->
+        <div id="fileList" class="hidden mt-4 space-y-2"></div>
+      </div>
+
+      <!-- Activity log -->
+      <div class="bg-[var(--c-surface-container-lowest)] border border-[var(--c-outline-variant)] rounded-xl overflow-hidden transition-colors">
+        <div class="px-5 py-3 border-b border-[var(--c-outline-variant)] bg-[var(--c-surface-container-low)] flex items-center justify-between">
+          <span class="font-mono-sm text-[var(--c-secondary)] uppercase tracking-wider flex items-center gap-2">
+            <span class="material-symbols-outlined text-sm" aria-hidden="true">list_alt</span>
+            Журнал активности
+          </span>
+          <span id="activeJobsBadge" class="hidden font-mono-sm text-[var(--c-primary)] font-semibold text-xs tracking-wider bg-[var(--c-primary-container)]/20 px-2 py-0.5 rounded">0 активн.</span>
+        </div>
+        <div id="logContainer" class="h-36 overflow-y-auto p-4 font-mono-sm text-xs leading-relaxed space-y-1 scroll-custom bg-[var(--c-surface-container-low)]" role="log" aria-live="polite">
+          <p class="text-[var(--c-on-surface-variant)]">&rsaquo; File Translator v2.0.0 инициализирован.</p>
+          <p class="text-[var(--c-on-surface-variant)]">&rsaquo; Соединение с API: Установлено.</p>
+          <p class="text-[var(--c-on-surface-variant)]">&rsaquo; Готов к обработке документов.</p>
+          <p class="text-[var(--c-primary)]">&rsaquo; Система в режиме ожидания...</p>
+        </div>
+      </div>
+
+      <!-- Active jobs status -->
+      <div id="activeJobsPanel" class="hidden bg-[var(--c-surface-container-lowest)] border border-[var(--c-outline-variant)] rounded-xl p-4 transition-colors">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="material-symbols-outlined text-sm text-[var(--c-primary)]" aria-hidden="true">hourglass_top</span>
+          <span class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-wider">Активные задания</span>
+        </div>
+        <div id="activeJobsList" class="space-y-2"></div>
+      </div>
+    </div>
+
+    <!-- ─── Right: Settings ─── -->
+    <div class="lg:col-span-5 flex flex-col gap-4">
+      <div class="bg-[var(--c-surface-container-lowest)] border border-[var(--c-outline-variant)] rounded-xl p-6 space-y-5 transition-colors">
+        <h2 class="font-display text-xl font-semibold text-[var(--c-on-surface)] flex items-center gap-2">
+          <span class="material-symbols-outlined text-[var(--c-primary)]" aria-hidden="true">tune</span>
+          Настройки
+        </h2>
+
+        <!-- Source language -->
+        <div>
+          <label for="sourceLang" class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1.5">Исходный язык</label>
+          <select id="sourceLang" class="w-full bg-[var(--c-surface-container-low)] border-b-2 border-[var(--c-outline-variant)] focus:border-[var(--c-primary)] px-4 py-2.5 text-sm outline-none rounded-t transition-colors">
+            <option value="auto">Определить автоматически</option>
+            <option value="ru">Русский (RU)</option>
+            <option value="en" selected>Английский (EN)</option>
+            <option value="sr">Сербский (SR)</option>
+            <option value="zh">Китайский (ZH)</option>
+          </select>
+        </div>
+
+        <!-- Target language -->
+        <div>
+          <label for="targetLang" class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1.5">Целевой язык</label>
+          <select id="targetLang" class="w-full bg-[var(--c-surface-container-low)] border-b-2 border-[var(--c-outline-variant)] focus:border-[var(--c-primary)] px-4 py-2.5 text-sm outline-none rounded-t transition-colors">
+            <option value="en">Английский (EN)</option>
+            <option value="ru" selected>Русский (RU)</option>
+            <option value="sr">Сербский (SR)</option>
+            <option value="zh">Китайский (ZH)</option>
+          </select>
+        </div>
+
+        <!-- Style -->
+        <fieldset>
+          <legend class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1.5">Стиль перевода</legend>
+          <div id="styleGroup" class="flex gap-2 p-1 bg-[var(--c-surface-container-low)] rounded-lg">
+            <button data-style="TECHNICAL" class="style-btn active flex-1 py-2 text-sm rounded-md border border-transparent">Технический</button>
+            <button data-style="LEGAL" class="style-btn flex-1 py-2 text-sm rounded-md text-[var(--c-secondary)]">Юридический</button>
+            <button data-style="MIXED" class="style-btn flex-1 py-2 text-sm rounded-md text-[var(--c-secondary)]">Смешанный</button>
+          </div>
+        </fieldset>
+
+        <!-- Mode -->
+        <fieldset>
+          <legend class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1.5">Режим перевода</legend>
+          <div class="space-y-2">
+            <label class="radio-card flex items-center gap-3 p-3 border border-[var(--c-outline-variant)] rounded-lg">
+              <input type="radio" name="mode" value="full" checked class="text-[var(--c-primary)] accent-[var(--c-primary)]">
+              <span class="flex flex-col">
+                <span class="text-sm font-semibold">Весь файл</span>
+                <span class="text-xs text-[var(--c-secondary)]">Полный парсинг и перевод документа</span>
+              </span>
+            </label>
+            <label class="radio-card flex items-center gap-3 p-3 border border-[var(--c-outline-variant)] rounded-lg">
+              <input type="radio" name="mode" value="filter_source" class="text-[var(--c-primary)] accent-[var(--c-primary)]">
+              <span class="flex flex-col">
+                <span class="text-sm font-semibold">Только иностранный текст</span>
+                <span class="text-xs text-[var(--c-secondary)]">Перевести только текст на исходном языке</span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        <!-- Glossary -->
+        <div class="flex items-center justify-between p-3 bg-[var(--c-surface-container-low)] rounded-lg">
+          <div class="flex items-center gap-3">
+            <span class="material-symbols-outlined text-[var(--c-primary)]" aria-hidden="true">book</span>
+            <div>
+              <p class="text-sm font-semibold">Интеграция глоссария</p>
+              <p class="text-xs text-[var(--c-secondary)]">Применять инженерную и не только терминологию</p>
+            </div>
+          </div>
+          <label for="glossaryToggle" class="toggle relative inline-flex items-center cursor-pointer">
+            <input id="glossaryToggle" type="checkbox" checked class="sr-only peer">
+            <span class="toggle-track w-11 h-6 bg-[var(--c-secondary-fixed-dim)] rounded-full relative">
+              <span class="toggle-thumb absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm"></span>
+            </span>
+          </label>
+        </div>
+        <!-- Collection selector (hidden when only "default" available) -->
+        <div id="collectionGroup" class="hidden">
+          <label for="collectionSelect" class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1.5">Коллекция глоссария</label>
+          <select id="collectionSelect" class="w-full bg-[var(--c-surface-container-low)] border-b-2 border-[var(--c-outline-variant)] focus:border-[var(--c-primary)] px-4 py-2.5 text-sm outline-none rounded-t transition-colors">
+            <option value="">Общий глоссарий</option>
+          </select>
+        </div>
+
+        <!-- Submit -->
+        <button id="startBtn" class="w-full py-3.5 bg-[var(--c-primary-container)] text-[var(--c-on-primary-container)] font-display font-bold text-lg rounded-xl shadow-lg hover:shadow-xl hover:brightness-105 active:scale-[0.97] transition-all flex items-center justify-center gap-3">
+          <span class="material-symbols-outlined" aria-hidden="true">translate</span>
+          Начать перевод
+        </button>
+        
+        <p id="errorMsg" class="text-sm text-[var(--c-error)] hidden"></p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══ Glossary Page ═══ -->
+<div id="glossary-page" class="hidden">
+  <div class="flex items-center justify-between mb-6">
+    <h2 class="font-display text-xl font-semibold text-[var(--c-on-surface)] flex items-center gap-2">
+      <span class="material-symbols-outlined text-[var(--c-primary)]" aria-hidden="true">book</span>
+      Глоссарий
+    </h2>
+    <div class="flex items-center gap-2">
+      <button id="exportGlossaryBtn" class="inline-flex items-center gap-2 px-4 py-2 border border-[var(--c-outline-variant)] text-[var(--c-on-surface)] rounded-lg hover:bg-[var(--c-surface-container-low)] transition-all active:scale-[0.97] text-sm">
+        <span class="material-symbols-outlined text-lg" aria-hidden="true">download</span>
+        Экспорт CSV
+      </button>
+      <button id="importGlossaryBtn" class="inline-flex items-center gap-2 px-4 py-2 border border-[var(--c-outline-variant)] text-[var(--c-on-surface)] rounded-lg hover:bg-[var(--c-surface-container-low)] transition-all active:scale-[0.97] text-sm">
+        <span class="material-symbols-outlined text-lg" aria-hidden="true">upload</span>
+        Импорт CSV
+      </button>
+      <button id="addGlossaryBtn" class="inline-flex items-center gap-2 px-4 py-2 bg-[var(--c-primary-container)] text-[var(--c-on-primary-container)] font-bold rounded-lg hover:brightness-95 transition-all active:scale-[0.97]">
+        <span class="material-symbols-outlined" aria-hidden="true">add</span>
+        Добавить запись
+      </button>
+    </div>
+  </div>
+
+  <div class="mb-4 flex flex-col sm:flex-row gap-3">
+    <div class="flex-1">
+      <input id="glossarySearch" type="text" placeholder="Поиск по словам..." class="w-full bg-[var(--c-surface-container-low)] border-b-2 border-[var(--c-outline-variant)] focus:border-[var(--c-primary)] px-4 py-2.5 text-sm outline-none rounded-t transition-colors">
+    </div>
+    <div class="sm:w-56">
+      <select id="glossaryCollectionSelect" class="w-full bg-[var(--c-surface-container-low)] border-b-2 border-[var(--c-outline-variant)] focus:border-[var(--c-primary)] px-4 py-2.5 text-sm outline-none rounded-t transition-colors">
+        <option value="">Общий глоссарий</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="bg-[var(--c-surface-container-lowest)] border border-[var(--c-outline-variant)] rounded-xl overflow-hidden transition-colors">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-[var(--c-surface-container-low)] border-b border-[var(--c-outline-variant)]">
+            <th class="text-left px-4 py-3 font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-wider">ID</th>
+            <th class="text-left px-4 py-3 font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-wider">RU</th>
+            <th class="text-left px-4 py-3 font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-wider">EN</th>
+            <th class="text-left px-4 py-3 font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-wider">SB</th>
+            <th class="text-left px-4 py-3 font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-wider">CH</th>
+            <th class="text-right px-4 py-3 font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-wider">Действия</th>
+          </tr>
+        </thead>
+        <tbody id="glossaryTableBody">
+          <tr><td colspan="6" class="px-4 py-8 text-center text-[var(--c-secondary)]">Загрузка...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <p id="glossaryTotal" class="mt-3 text-xs text-[var(--c-secondary)]"></p>
+</div>
+
+</main>
+
+<!-- ═══ Footer ═══ -->
+<footer class="bg-[var(--c-surface-container-low)] border-t border-[var(--c-outline-variant)] transition-colors mt-auto">
+  <div class="max-w-[1440px] mx-auto px-6 py-5 flex flex-col md:flex-row items-center justify-between gap-3">
+    <span class="font-mono-sm text-[var(--c-secondary)] text-xs">&copy; 2026 File Translator v2.0.0. ПАО ОНХП</span>
+    <div class="flex gap-6 text-xs text-[var(--c-on-surface-variant)]">
+      <a href="http://issvm.onhp.local/onhp:file_translator" target="_blank" rel="noopener noreferrer" class="hover:text-[var(--c-primary)] transition-colors">Документация</a>
+      <a href="/support.html" class="hover:text-[var(--c-primary)] transition-colors">Поддержка</a>
+      <a href="/privacy.html" class="hover:text-[var(--c-primary)] transition-colors">Политика конфиденциальности</a>
+    </div>
+  </div>
+</footer>
+
+<!-- ═══ Glossary Modal ═══ -->
+<div id="glossaryModal" class="modal-overlay fixed inset-0 z-[100] flex items-center justify-center hidden" role="dialog" aria-modal="true" aria-labelledby="glossaryModalTitle">
+  <div class="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
+  <div class="modal-content relative bg-[var(--c-surface-container-lowest)] border border-[var(--c-outline-variant)] rounded-xl p-6 w-full max-w-lg mx-4 shadow-2xl">
+    <div class="flex items-center justify-between mb-4">
+      <h3 id="glossaryModalTitle" class="font-display text-lg font-semibold text-[var(--c-on-surface)]">Добавить запись</h3>
+      <button id="glossaryModalClose" class="p-1 rounded-full hover:bg-[var(--c-surface-container-low)] transition-colors text-[var(--c-secondary)]" aria-label="Закрыть">
+        <span class="material-symbols-outlined" aria-hidden="true">close</span>
+      </button>
+    </div>
+    <div class="space-y-4">
+      <div>
+        <label for="glossaryFormRu" class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1">RU</label>
+        <input id="glossaryFormRu" type="text" class="w-full bg-[var(--c-surface-container-low)] border-b-2 border-[var(--c-outline-variant)] focus:border-[var(--c-primary)] px-4 py-2.5 text-sm outline-none rounded-t transition-colors" placeholder="Русский">
+      </div>
+      <div>
+        <label for="glossaryFormEn" class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1">EN</label>
+        <input id="glossaryFormEn" type="text" class="w-full bg-[var(--c-surface-container-low)] border-b-2 border-[var(--c-outline-variant)] focus:border-[var(--c-primary)] px-4 py-2.5 text-sm outline-none rounded-t transition-colors" placeholder="English">
+      </div>
+      <div>
+        <label for="glossaryFormSb" class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1">SB</label>
+        <input id="glossaryFormSb" type="text" class="w-full bg-[var(--c-surface-container-low)] border-b-2 border-[var(--c-outline-variant)] focus:border-[var(--c-primary)] px-4 py-2.5 text-sm outline-none rounded-t transition-colors" placeholder="Српски">
+      </div>
+      <div>
+        <label for="glossaryFormCh" class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1">CH</label>
+        <input id="glossaryFormCh" type="text" class="w-full bg-[var(--c-surface-container-low)] border-b-2 border-[var(--c-outline-variant)] focus:border-[var(--c-primary)] px-4 py-2.5 text-sm outline-none rounded-t transition-colors" placeholder="中文">
+      </div>
+      <p id="glossaryFormError" class="text-sm text-[var(--c-error)] hidden"></p>
+    </div>
+    <div class="flex justify-end gap-3 mt-6">
+      <button id="glossaryModalCancel" class="px-4 py-2 text-sm text-[var(--c-secondary)] hover:bg-[var(--c-surface-container-low)] rounded-lg transition-colors">Отмена</button>
+      <button id="glossaryModalSave" class="px-4 py-2 bg-[var(--c-primary-container)] text-[var(--c-on-primary-container)] font-bold rounded-lg hover:brightness-95 transition-all active:scale-[0.97]">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Glossary Import Modal ═══ -->
+<div id="glossaryImportModal" class="modal-overlay fixed inset-0 z-[100] flex items-center justify-center hidden" role="dialog" aria-modal="true" aria-labelledby="glossaryImportTitle">
+  <div class="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
+  <div class="modal-content relative bg-[var(--c-surface-container-lowest)] border border-[var(--c-outline-variant)] rounded-xl p-6 w-full max-w-lg mx-4 shadow-2xl">
+    <div class="flex items-center justify-between mb-4">
+      <h3 id="glossaryImportTitle" class="font-display text-lg font-semibold text-[var(--c-on-surface)]">Импорт CSV</h3>
+      <button id="glossaryImportClose" class="p-1 rounded-full hover:bg-[var(--c-surface-container-low)] transition-colors text-[var(--c-secondary)]" aria-label="Закрыть">
+        <span class="material-symbols-outlined" aria-hidden="true">close</span>
+      </button>
+    </div>
+    <div class="space-y-4">
+      <div>
+        <label class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1">Коллекция</label>
+        <select id="importCollectionSelect" class="w-full bg-[var(--c-surface-container-low)] border-b-2 border-[var(--c-outline-variant)] focus:border-[var(--c-primary)] px-4 py-2.5 text-sm outline-none rounded-t transition-colors">
+          <option value="">Общий глоссарий</option>
+        </select>
+      </div>
+      <div>
+        <label for="importFileInput" class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1">CSV файл</label>
+        <input id="importFileInput" type="file" accept=".csv" class="w-full bg-[var(--c-surface-container-low)] border-b-2 border-[var(--c-outline-variant)] focus:border-[var(--c-primary)] px-4 py-2.5 text-sm outline-none rounded-t transition-colors file:mr-3 file:py-1 file:px-3 file:border-0 file:bg-[var(--c-primary-container)] file:text-[var(--c-on-primary-container)] file:font-bold file:text-xs file:rounded-lg">
+      </div>
+      <p id="importFormError" class="text-sm text-[var(--c-error)] hidden"></p>
+    </div>
+    <div class="flex justify-end gap-3 mt-6">
+      <button id="glossaryImportCancel" class="px-4 py-2 text-sm text-[var(--c-secondary)] hover:bg-[var(--c-surface-container-low)] rounded-lg transition-colors">Отмена</button>
+      <button id="glossaryImportSubmit" class="px-4 py-2 bg-[var(--c-primary-container)] text-[var(--c-on-primary-container)] font-bold rounded-lg hover:brightness-95 transition-all active:scale-[0.97]">Загрузить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Login Modal ═══ -->
+<div id="loginModal" class="modal-overlay fixed inset-0 z-50 bg-black/30 flex items-center justify-center hidden">
+  <div class="modal-content relative bg-[var(--c-surface-container-lowest)] border border-[var(--c-outline-variant)] rounded-xl p-6 w-full max-w-sm mx-4 shadow-2xl">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="font-display text-lg font-semibold text-[var(--c-on-surface)]">Вход</h3>
+      <button id="loginModalClose" class="p-1 rounded-full hover:bg-[var(--c-surface-container-low)] transition-colors text-[var(--c-secondary)]" >
+        <!-- <span class="material-symbols-outlined" aria-hidden="true">close</span> -->
+      </button>
+    </div>
+    <div class="space-y-4">
+      <div>
+        <label for="loginUsername" class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1">Имя пользователя</label>
+        <input id="loginUsername" type="text" class="w-full bg-[var(--c-surface-container-low)] border-b-2 border-[var(--c-outline-variant)] focus:border-[var(--c-primary)] px-4 py-2.5 text-sm outline-none rounded-t transition-colors" placeholder="username" autocomplete="username">
+      </div>
+      <div>
+        <label for="loginPassword" class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1">Пароль</label>
+        <input id="loginPassword" type="password" class="w-full bg-[var(--c-surface-container-low)] border-b-2 border-[var(--c-outline-variant)] focus:border-[var(--c-primary)] px-4 py-2.5 text-sm outline-none rounded-t transition-colors" placeholder="••••••••" autocomplete="current-password">
+      </div>
+      <p id="loginError" class="text-sm text-[var(--c-error)] hidden"></p>
+    </div>
+    <div class="flex justify-end gap-3 mt-6">
+      <button id="loginModalCancel" class="px-4 py-2 text-sm text-[var(--c-secondary)] hover:bg-[var(--c-surface-container-low)] rounded-lg transition-colors">Отмена</button>
+      <button id="loginSubmit" class="px-6 py-2 bg-[var(--c-primary-container)] text-[var(--c-on-primary-container)] font-bold rounded-lg hover:brightness-95 transition-all active:scale-[0.97]">Войти</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Toast ═══ -->
+<div id="toastContainer" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2"></div>
+
+<script>
+// ══════════════════════════════════════════════════
+//  Theme
+// ══════════════════════════════════════════════════
+const html = document.documentElement;
+const themeBtn = document.getElementById('themeBtn');
+const themeIcon = themeBtn.querySelector('.material-symbols-outlined');
+
+function applyTheme(dark) {
+  html.classList.toggle('dark', dark);
+  themeIcon.textContent = dark ? 'dark_mode' : 'light_mode';
+  localStorage.setItem('theme', dark ? 'dark' : 'light');
+}
+
+// Restore theme
+const saved = localStorage.getItem('theme');
+const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+if (saved === 'dark' || (!saved && prefersDark)) applyTheme(true);
+
+themeBtn.addEventListener('click', () => applyTheme(!html.classList.contains('dark')));
+
+// ══════════════════════════════════════════════════
+//  Auth (JWT + login/logout)
+// ══════════════════════════════════════════════════
+let authToken = localStorage.getItem('auth_token') || null;
+let refreshToken = localStorage.getItem('refresh_token') || null;
+let currentUser = null;
+let isAuthenticated = !!localStorage.getItem('auth_token');
+
+const loginBtn = document.getElementById('loginBtn');
+const logoutBtn = document.getElementById('logoutBtn');
+const userInfo = document.getElementById('userInfo');
+const userNameDisplay = document.getElementById('userNameDisplay');
+const loginModal = document.getElementById('loginModal');
+const loginSubmit = document.getElementById('loginSubmit');
+const loginUsername = document.getElementById('loginUsername');
+const loginPassword = document.getElementById('loginPassword');
+const loginError = document.getElementById('loginError');
+
+function authFetch(url, options = {}) {
+  const headers = options.headers || {};
+  if (authToken) {
+    headers['Authorization'] = 'Bearer ' + authToken;
+  }
+  return fetch(url, { cache: 'no-store', ...options, headers });
+}
+
+async function updateAuthUI() {
+  const token = localStorage.getItem('auth_token');
+  if (token) {
+    authToken = token;
+    refreshToken = localStorage.getItem('refresh_token');
+    try {
+      const resp = await authFetch('/api/auth/me');
+      if (resp.ok) {
+        currentUser = await resp.json();
+        isAuthenticated = true;
+        loginBtn.classList.add('hidden');
+        userInfo.classList.remove('hidden');
+        userInfo.classList.add('flex');
+        userNameDisplay.textContent = currentUser.display_name || currentUser.username;
+        // Hide login modal if user was authenticated on page load
+        closeLoginModalSilent();
+        return;
+      }
+      if (resp.status === 401 && refreshToken) {
+        const refreshed = await tryRefreshToken();
+        if (refreshed) {
+          const retry = await authFetch('/api/auth/me');
+          if (retry.ok) {
+            currentUser = await retry.json();
+            isAuthenticated = true;
+            loginBtn.classList.add('hidden');
+            userInfo.classList.remove('hidden');
+            userInfo.classList.add('flex');
+            userNameDisplay.textContent = currentUser.display_name || currentUser.username;
+            closeLoginModalSilent();
+            return;
+          }
+        }
+      }
+    } catch { console.debug('Ошибка при повторной попытке логина'); }
+  }
+  clearAuthState();
+}
+
+function clearAuthState() {
+  authToken = null;
+  refreshToken = null;
+  currentUser = null;
+  isAuthenticated = false;
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('refresh_token');
+  // Hide interface and show login modal automatically when not authenticated
+  loginBtn.classList.add('hidden');
+  userInfo.classList.add('hidden');
+  userInfo.classList.remove('flex');
+  openLoginModalAuto();
+}
+
+// Automatically open login modal when user is not authenticated
+function openLoginModalAuto() {
+  loginUsername.value = '';
+  loginPassword.value = '';
+  loginError.classList.add('hidden');
+  loginModal.classList.remove('hidden');
+  setTimeout(() => loginUsername.focus(), 100);
+}
+
+// Silent close (no error reset) - used after auth restore on page load
+function closeLoginModalSilent() {
+  loginModal.classList.add('hidden');
+}
+
+async function tryRefreshToken() {
+  const rt = localStorage.getItem('refresh_token');
+  if (!rt) return false;
+  try {
+    const resp = await fetch('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: rt }),
+    });
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    authToken = data.access_token;
+    refreshToken = data.refresh_token;
+    localStorage.setItem('auth_token', authToken);
+    localStorage.setItem('refresh_token', refreshToken);
+    return true;
+  } catch { return false; }
+}
+
+loginBtn.addEventListener('click', () => {
+  loginUsername.value = '';
+  loginPassword.value = '';
+  loginError.classList.add('hidden');
+  loginModal.classList.remove('hidden');
+  setTimeout(() => loginUsername.focus(), 100);
+});
+
+function closeLoginModal() {
+  // Если пользователь не вошёл — не закрываем модалку автоматически
+  if (!isAuthenticated) return;
+  loginModal.classList.add('hidden');
+  loginError.classList.add('hidden');
+}
+
+// Allow closing modal only when authenticated (for already logged-in users clicking outside)
+function closeLoginModalIfAllowed() {
+  if (isAuthenticated) {
+    closeLoginModalSilent();
+    loginError.classList.add('hidden');
+  }
+}
+
+document.getElementById('loginModalClose').addEventListener('click', () => { if (isAuthenticated) closeLoginModalSilent(); });
+document.getElementById('loginModalCancel').addEventListener('click', () => { if (isAuthenticated) closeLoginModalSilent(); });
+loginModal.addEventListener('mousedown', function(e) {
+  if (e.target === e.currentTarget && isAuthenticated) closeLoginModalSilent();
+});
+
+loginUsername.addEventListener('keydown', e => {
+  if (e.key === 'Enter') loginPassword.focus();
+});
+loginPassword.addEventListener('keydown', e => {
+  if (e.key === 'Enter') loginSubmit.click();
+});
+
+loginSubmit.addEventListener('click', async () => {
+  const username = loginUsername.value.trim();
+  const password = loginPassword.value;
+  if (!username || !password) {
+    loginError.textContent = 'Заполните все поля';
+    loginError.classList.remove('hidden');
+    return;
+  }
+  loginSubmit.disabled = true;
+  loginSubmit.textContent = 'Вход...';
+  try {
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: 'Ошибка сервера' }));
+      throw new Error(err.detail || 'Неверные учётные данные');
+    }
+    const data = await resp.json();
+    authToken = data.access_token;
+    refreshToken = data.refresh_token;
+    localStorage.setItem('auth_token', authToken);
+    localStorage.setItem('refresh_token', refreshToken);
+    isAuthenticated = true;
+    // Close modal unconditionally after successful login
+    loginModal.classList.add('hidden');
+    await updateAuthUI();
+    await loadCollections();
+    await restoreActiveJobs();
+    showToast('Вход выполнен', 'check_circle');
+  } catch (e) {
+    loginError.textContent = e.message;
+    loginError.classList.remove('hidden');
+  } finally {
+    loginSubmit.disabled = false;
+    loginSubmit.textContent = 'Войти';
+  }
+});
+
+logoutBtn.addEventListener('click', async () => {
+  try {
+    await authFetch('/api/auth/logout', { method: 'POST' });
+  } catch { console.debug('Ошибка при logout, чистим локально'); }
+  clearAuthState();
+  showToast('Выход выполнен', 'check_circle');
+});
+
+// Check auth on page load, then restore active jobs, settings and load collections
+updateAuthUI().then(() => {
+  restoreSettings();
+  restoreActiveJobs();
+  loadCollections();
+});
+
+// ══════════════════════════════════════════════════
+//  Settings persistence (localStorage)
+// ══════════════════════════════════════════════════
+
+function saveSettings() {
+  localStorage.setItem('sourceLang', document.getElementById('sourceLang').value);
+  localStorage.setItem('targetLang', document.getElementById('targetLang').value);
+  const activeStyle = document.querySelector('.style-btn.active')?.dataset.style || 'TECHNICAL';
+  localStorage.setItem('translationStyle', activeStyle);
+  const activeMode = document.querySelector('input[name="mode"]:checked')?.value || 'full';
+  localStorage.setItem('translationMode', activeMode);
+  localStorage.setItem('glossaryToggle', document.getElementById('glossaryToggle').checked);
+  const collSelect = document.getElementById('collectionSelect');
+  if (collSelect) localStorage.setItem('translationCollection', collSelect.value);
+  const glossCollSelect = document.getElementById('glossaryCollectionSelect');
+  if (glossCollSelect) localStorage.setItem('glossaryCollection', glossCollSelect.value);
+}
+
+function restoreSettings() {
+  const sl = localStorage.getItem('sourceLang');
+  const tl = localStorage.getItem('targetLang');
+  const st = localStorage.getItem('translationStyle');
+  const md = localStorage.getItem('translationMode');
+  const gl = localStorage.getItem('glossaryToggle');
+
+  if (sl) document.getElementById('sourceLang').value = sl;
+  if (tl) document.getElementById('targetLang').value = tl;
+
+  if (st) {
+    document.querySelectorAll('.style-btn').forEach(b => {
+      const isActive = b.dataset.style === st;
+      b.classList.toggle('active', isActive);
+      if (!isActive) b.classList.add('text-[var(--c-secondary)]');
+    });
+  }
+
+  if (md) {
+    const radio = document.querySelector(`input[name="mode"][value="${md}"]`);
+    if (radio) radio.checked = true;
+  }
+
+  if (gl !== null) document.getElementById('glossaryToggle').checked = gl === 'true';
+
+  updateSourceLangAvailability();
+}
+
+// Save settings on user interaction
+document.getElementById('sourceLang').addEventListener('change', saveSettings);
+document.getElementById('targetLang').addEventListener('change', saveSettings);
+document.querySelectorAll('.style-btn').forEach(b => {
+  b.addEventListener('click', saveSettings);
+});
+document.querySelectorAll('input[name="mode"]').forEach(r => {
+  r.addEventListener('change', saveSettings);
+});
+document.getElementById('glossaryToggle').addEventListener('change', saveSettings);
+
+// Sync collection select actions to localStorage
+var collSelect = document.getElementById('collectionSelect');
+if (collSelect) collSelect.addEventListener('change', saveSettings);
+
+var glossCollSelect = document.getElementById('glossaryCollectionSelect');
+if (glossCollSelect) glossCollSelect.addEventListener('change', function() {
+  currentGlossaryCollection = this.value;
+  saveSettings();
+});
+
+// ══════════════════════════════════════════════════
+//  Style selector
+// ══════════════════════════════════════════════════
+document.querySelectorAll('.style-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.style-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
+
+// ══════════════════════════════════════════════════
+//  Mode change handler: disable sourceLang when mode=full (auto-detect)
+// ══════════════════════════════════════════════════
+const sourceLangSelect = document.getElementById('sourceLang');
+function updateSourceLangAvailability() {
+  const modeEl = document.querySelector('input[name="mode"]:checked');
+  const isFilterMode = modeEl && modeEl.value === 'filter_source';
+  if (isFilterMode) {
+    sourceLangSelect.disabled = false;
+    sourceLangSelect.title = '';
+    sourceLangSelect.classList.remove('select-disabled');
+  } else {
+    sourceLangSelect.disabled = true;
+    sourceLangSelect.title = 'Не требуется при режиме "Весь файл" (LLM определяет автоматически)';
+    sourceLangSelect.classList.add('select-disabled');
+    // Force back to auto if disabled
+    if (sourceLangSelect.value !== 'auto') {
+      sourceLangSelect.value = 'auto';
+    }
+  }
+}
+
+// Attach to mode radio buttons
+document.querySelectorAll('input[name="mode"]').forEach(radio => {
+  radio.addEventListener('change', updateSourceLangAvailability);
+});
+
+// Initial state (default is "full" mode, so disable sourceLang)
+updateSourceLangAvailability();
+
+// ══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
+const MAX_FILE_SIZE = 128 * 1024 * 1024; // 128 MB
+
+function validateFile(file) {
+  if (file.size > MAX_FILE_SIZE) {
+    return `Файл "${file.name}" превышает лимит в 128 MB (${formatSize(file.size)})`;
+  }
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['docx', 'doc', 'xlsx', 'xls'].includes(ext)) {
+    return `Неподдерживаемый формат: .${ext}`;
+  }
+  return null;
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  const div = document.createElement('div');
+  div.appendChild(document.createTextNode(str));
+  return div.innerHTML;
+}
+
+function pluralize(n, forms) {
+  n = Math.abs(n) % 100;
+  const n1 = n % 10;
+  if (n > 10 && n < 20) return forms[2];
+  if (n1 > 1 && n1 < 5) return forms[1];
+  if (n1 === 1) return forms[0];
+  return forms[2];
+}
+
+// ══════════════════════════════════════════════════
+//  Drag & drop + file input
+// ══════════════════════════════════════════════════
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const fileList = document.getElementById('fileList');
+const logContainer = document.getElementById('logContainer');
+const startBtn = document.getElementById('startBtn');
+const errorMsg = document.getElementById('errorMsg');
+
+let selectedFiles = [];
+
+function addLog(msg, cls = '') {
+  const p = document.createElement('p');
+  p.className = cls;
+  const time = new Date().toLocaleTimeString('ru-RU', { hour12: false });
+  p.textContent = `› [${time}] ${msg}`;
+  logContainer.appendChild(p);
+  logContainer.scrollTop = logContainer.scrollHeight;
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+// fileJobMap: filename → jobId (устанавливается после отправки)
+const fileJobMap = {};
+
+function renderFiles() {
+  if (selectedFiles.length === 0) {
+    fileList.classList.add('hidden');
+    fileList.innerHTML = '';
+    return;
+  }
+  fileList.classList.remove('hidden');
+
+  const totalSize = selectedFiles.reduce((s, f) => s + f.size, 0);
+  fileList.innerHTML = `
+    <div class="flex items-center justify-between mb-2">
+      <span class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-wider">
+        Очередь (${selectedFiles.length} ${pluralize(selectedFiles.length, ['файл', 'файла', 'файлов'])})
+      </span>
+      <span class="text-xs text-[var(--c-secondary)]">${formatSize(totalSize)}</span>
+    </div>
+  `;
+  selectedFiles.forEach((f, i) => {
+    const fileKey = f.name + '_' + f.size + '_' + f.lastModified;
+    const div = document.createElement('div');
+    div.className = 'file-item relative p-3 border border-[var(--c-outline-variant)] rounded-lg overflow-hidden';
+    div.dataset.fileKey = fileKey;
+    div.innerHTML = `
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3 min-w-0 flex-1">
+          <span class="material-symbols-outlined text-[var(--c-primary)] shrink-0 file-icon" aria-hidden="true">description</span>
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-semibold truncate">${escapeHtml(f.name)}</p>
+            <p class="text-xs text-[var(--c-secondary)] file-status-text">${formatSize(f.size)}</p>
+          </div>
+        </div>
+        <button data-idx="${i}" class="remove-btn text-[var(--c-error)] hover:bg-[var(--c-error)]/10 p-1 rounded transition-colors shrink-0">
+          <span class="material-symbols-outlined text-lg" aria-hidden="true">close</span>
+        </button>
+      </div>
+      <div class="file-progress-bar hidden">
+        <div class="file-progress-fill"></div>
+      </div>
+    `;
+    div.querySelector('.remove-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectedFiles = selectedFiles.filter(x => x !== f);
+      renderFiles();
+      addLog(`Файл удален: ${f.name}`, 'text-[var(--c-error)]');
+    });
+    fileList.appendChild(div);
+  });
+}
+
+// Обновляет прогресс-бар и статус прямо в карточке файла
+function updateFileCardProgress(fileKey, status, pct, stage, errorText, queuePosition) {
+  const card = fileList.querySelector(`[data-file-key="${fileKey}"]`);
+  if (!card) return;
+
+  const bar = card.querySelector('.file-progress-bar');
+  const fill = card.querySelector('.file-progress-fill');
+  const statusText = card.querySelector('.file-status-text');
+  const icon = card.querySelector('.file-icon');
+
+  bar.classList.remove('hidden');
+  fill.classList.remove('indeterminate', 'done', 'error');
+
+  if (status === 'pending') {
+    fill.classList.add('indeterminate');
+    if (queuePosition != null && queuePosition > 0) {
+      statusText.textContent = `⏳ Очередь: позиция ${queuePosition + 1}`;
+    } else if (queuePosition === 0) {
+      statusText.textContent = '⏳ Скоро начнётся...';
+    } else {
+      statusText.textContent = '⏳ Ожидание в очереди...';
+    }
+    statusText.className = 'text-xs text-[var(--c-secondary)] file-status-text';
+  } else if (status === 'running') {
+    if (pct != null && pct > 0) {
+      fill.style.width = pct + '%';
+      const stageName = (stage || '').toLowerCase();
+      if (stageName === 'validation' || stageName === 'extraction' || stageName === 'glossary') {
+        statusText.textContent = `📄 Извлечение текста... ${pct}%`;
+      } else {
+        statusText.textContent = `🔄 Перевод... ${pct}%`;
+      }
+    } else {
+      fill.classList.add('indeterminate');
+      statusText.textContent = '📄 Подготовка к обработке...';
+    }
+    statusText.className = 'text-xs text-[var(--c-secondary)] file-status-text';
+  } else if (status === 'completed') {
+    fill.classList.add('done');
+    statusText.textContent = '';
+    statusText.className = 'text-xs font-semibold file-status-text text-[var(--c-status-success)]';
+    icon.textContent = 'task_alt';
+    icon.classList.replace('text-[var(--c-primary)]', 'text-[var(--c-status-success)]');
+    // Убираем кнопку удаления, показываем скачать
+    const removeBtn = card.querySelector('.remove-btn');
+    if (removeBtn && !card.querySelector('.download-inline-btn')) {
+      removeBtn.remove();
+      const jobId = fileJobMap[fileKey];
+      if (jobId) {
+        const dlBtn = document.createElement('button');
+        dlBtn.className = 'download-inline-btn px-3 py-1 bg-[var(--c-primary-container)] text-[var(--c-on-primary-container)] rounded-lg font-bold text-xs hover:brightness-95 active:scale-95 transition-all shrink-0';
+        dlBtn.textContent = 'Скачать';
+        dlBtn.addEventListener('click', () => downloadJob(jobId));
+        card.querySelector('.flex.items-center.justify-between').appendChild(dlBtn);
+      }
+    }
+    // Убираем карточку из очереди через 60 секунд
+    setTimeout(() => {
+      card.style.opacity = '0';
+      card.style.transition = 'opacity 0.4s';
+      setTimeout(() => card.remove(), 400);
+    }, 60000);
+  } else if (status === 'failed' || status === 'cancelled') {
+    fill.classList.add('error');
+    statusText.textContent = `❌ ${status === 'cancelled' ? 'Отменён' : 'Ошибка'}: ${friendlyError(errorText)}`;
+    statusText.className = 'text-xs font-semibold file-status-text text-[var(--c-error)]';
+    icon.textContent = 'error_outline';
+  }
+}
+
+['dragenter', 'dragover'].forEach(evt => {
+  dropZone.addEventListener(evt, e => { 
+    e.preventDefault(); 
+    e.stopPropagation();
+    dropZone.classList.add('drag-over'); 
+  });
+});
+
+// Исправленный dragleave: проверяем что вышли именно из dropZone, а не перешли на дочерний элемент
+dropZone.addEventListener('dragleave', e => { 
+  e.preventDefault(); 
+  e.stopPropagation();
+  // Удаляем класс только если курсор покинул саму зону (relatedTarget === null или вне зоны)
+  if (!dropZone.contains(e.relatedTarget)) {
+    dropZone.classList.remove('drag-over');
+  }
+});
+
+// Drop должен удалять drag-over и обрабатывать файлы
+dropZone.addEventListener('drop', e => { 
+  e.preventDefault(); 
+  e.stopPropagation();
+  dropZone.classList.remove('drag-over');
+  
+  const files = Array.from(e.dataTransfer.files);
+  if (files.length) {
+    let added = 0;
+    for (const file of files) {
+      const err = validateFile(file);
+      if (!err) {
+        selectedFiles.push(file);
+        added++;
+      } else {
+        addLog(err, 'text-[var(--c-error)]');
+        showToast(err, 'error', true);
+      }
+    }
+    if (added > 0) {
+      renderFiles();
+      addLog(`Загружено ${added} ${pluralize(added, ['файл', 'файла', 'файлов'])}`);
+    }
+  }
+});
+
+// Клавиатурная доступность: Enter/Space открывает диалог выбора файлов
+dropZone.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    fileInput.click();
+  }
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) {
+    let added = 0;
+    for (const file of Array.from(fileInput.files)) {
+      const err = validateFile(file);
+      if (!err) {
+        selectedFiles.push(file);
+        added++;
+      } else {
+        addLog(err, 'text-[var(--c-error)]');
+      }
+    }
+    if (added > 0) {
+      renderFiles();
+      addLog(`Выбрано ${added} ${pluralize(added, ['файл', 'файла', 'файлов'])}`);
+    }
+    fileInput.value = '';
+  }
+});
+
+// ══════════════════════════════════════════════════
+//  Translation submission with job polling & download
+// ══════════════════════════════════════════════════
+
+function friendlyError(err) {
+  if (!err) return 'Неизвестная ошибка';
+  const msg = String(err);
+  if (/unavailable|name or service not known|connecterror|econnrefused/i.test(msg)) return 'Нет доступа к серверу модели';
+  if (/timeout/i.test(msg)) return 'Превышено время ожидания ответа';
+  if (/rate limit|too many/i.test(msg)) return 'Слишком много запросов, попробуйте позже';
+  if (/invalid api/i.test(msg)) return 'Ошибка ключа API';
+  if (/translation error|invalid json/i.test(msg)) return 'Модель вернула пустой ответ';
+  return msg;
+}
+
+// Track active jobs for polling
+let activeJobs = {}; // { jobId: { status, progress, error, filename, completedAt } }
+
+// Restore active jobs from server on page reload
+// Only non-terminal jobs (pending/running) are restored — completed/failed/cancelled
+// are transient per-session and disappear after page reload.
+async function restoreActiveJobs() {
+  try {
+    const resp = await authFetch('/jobs');
+    if (!resp.ok) return;
+    const jobs = await resp.json();
+    const myUserId = currentUser?.user_id;
+    for (const job of jobs) {
+      if (!job.job_id) continue;
+      if (['completed', 'failed', 'cancelled'].includes(job.status)) continue;
+      if (myUserId && job.user_id && job.user_id !== myUserId) continue;
+      activeJobs[job.job_id] = {
+        status: job.status || 'pending',
+        progress: job.progress,
+        error: job.error_message,
+        filename: job.filename || 'Документ',
+        stage: job.current_stage,
+        queuePosition: job.queue_position,
+        result: job.output_file_path || null,
+        completedAt: null,
+      };
+    }
+    updateActiveJobsPanel();
+    for (const jobId of Object.keys(activeJobs)) {
+      pollJobStatus(jobId);
+    }
+  } catch { console.warn('Ошибка восстановления активных заданий с сервера'); }
+}
+
+function updateJobStatusUI(jobId) {
+  const job = activeJobs[jobId];
+  if (!job) return;
+  
+  const el = document.getElementById(`status-${jobId}`);
+  if (!el) return;
+  
+  const progressFill = document.getElementById(`progress-fill-${jobId}`);
+  
+  // Clear previous content
+  el.innerHTML = '';
+  
+  const s = job.status;
+  const p = job.progress;
+  const pct = p != null ? Math.round(p * 100) : 0;
+
+  // Также обновляем карточку файла в fileList
+  if (job.fileKey) {
+    updateFileCardProgress(job.fileKey, s, pct > 0 ? pct : null, job.stage, job.error, job.queuePosition);
+  }
+  
+  if (s === 'pending') {
+    if (progressFill) progressFill.style.width = '0%';
+    el.textContent = '⏳ Ожидание в очереди...';
+  } else if (s === 'running' && p == null) {
+    if (progressFill) progressFill.style.width = '0%';
+    el.textContent = '📄 Подготовка к обработке...';
+  } else if (s === 'running' && p >= 0) {
+    if (progressFill) progressFill.style.width = pct + '%';
+    const stage = (job.stage || '').toLowerCase();
+    if (stage === 'validation' || stage === 'extraction' || stage === 'glossary') {
+      el.textContent = `📄 Извлечение текста... ${pct}%`;
+    } else if (stage === 'translation' || stage === 'save' || p > 0) {
+      const span = document.createElement('span');
+      span.className = 'animate-pulse';
+      span.textContent = 'Перевод текста...';
+      el.appendChild(span);
+      if (p > 0) {
+        el.appendChild(document.createTextNode(` ${pct}%`));
+      }
+    } else {
+      el.textContent = `📄 Подготовка... ${pct}%`;
+    }
+  } else if (s === 'completed') {
+    // Completed = full block filled
+    if (progressFill) progressFill.style.width = '100%';
+    const msg = document.createElement('span');
+    msg.className = 'text-[var(--c-status-success)] font-semibold';
+    msg.textContent = '';
+    el.appendChild(msg);
+    const btn = document.createElement('button');
+    btn.className = 'ml-2 px-3 py-1 bg-[var(--c-primary-container)] text-[var(--c-on-primary-container)] rounded-lg font-bold hover:brightness-95 active:scale-95 transition-all';
+    btn.textContent = 'Скачать файл';
+    btn.addEventListener('click', () => downloadJob(jobId));
+    el.appendChild(btn);
+  } else if (s === 'failed' || s === 'cancelled') {
+    // Failed/cancelled — no fill
+    if (progressFill) progressFill.style.width = '0%';
+    const msg = document.createElement('span');
+    msg.className = 'text-[var(--c-error)] font-semibold';
+    if (s === 'cancelled') {
+      msg.textContent = '❌ Отменён';
+    } else {
+      msg.textContent = `❌ Ошибка: ${friendlyError(job.error)}`;
+    }
+    el.appendChild(msg);
+  } else {
+    if (progressFill) progressFill.style.width = '0%';
+    el.textContent = s.toUpperCase();
+  }
+
+  // Show/hide buttons visually — actual click handling is delegated to #activeJobsList
+  const cancelBtn = document.getElementById(`cancel-btn-${jobId}`);
+  if (cancelBtn) {
+    const isPending = s === 'pending' || s === 'running';
+    cancelBtn.classList.toggle('hidden', !isPending);
+    if (isPending) {
+      cancelBtn.title = 'Отменить обработку';
+    }
+  }
+
+  // Auto-remove failed/cancelled jobs after 5 seconds
+  if ((s === 'failed' || s === 'cancelled') && !job._removeTimer) {
+    job._removeTimer = setTimeout(() => {
+      delete activeJobs[jobId];
+      updateActiveJobsPanel();
+    }, 5000);
+  }
+}
+
+let _pageClosing = false;
+window.addEventListener('beforeunload', () => _pageClosing = true);
+
+// Track visibility without permanently stopping polls — only extend delay when hidden
+let _wasHidden = false;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    _wasHidden = true;
+  } else if (_wasHidden && !_pageClosing) {
+    // Tab became visible again — reset flag, polls will continue normally
+    _wasHidden = false;
+  }
+});
+
+// Helper: wait with adaptive delay based on visibility state
+function waitFor(delayMs) {
+  return new Promise(resolve => {
+    const actualDelay = (_wasHidden && !_pageClosing) ? Math.max(delayMs * 3, 5000) : delayMs;
+    setTimeout(resolve, actualDelay);
+  });
+}
+
+async function pollJobStatus(jobId) {
+  if (!activeJobs[jobId]) return;
+  let elapsed = 0;
+  const maxWait = 30 * 60 * 1000; // 30 минут максимум
+  let retries = 0;
+  const maxRetries = 5;
+  let retryToastShown = false;
+  
+  while (elapsed < maxWait) {
+    // Exponential backoff for retries: 2s, 4s, 8s, 16s, 30s max
+    const delay = retries > 0 ? Math.min(2000 * Math.pow(2, retries - 1), 30000) : 2000;
+    await waitFor(delay);
+    elapsed += (_wasHidden && !_pageClosing) ? Math.max(delay * 3, 5000) : delay;
+    if (_pageClosing || !activeJobs[jobId]) return; // страница закрывается / job удалён
+    try {
+      const resp = await authFetch(`/job/${jobId}`);
+      if (!resp.ok) {
+        if (!activeJobs[jobId]) return;
+        retries++;
+        if (retries > maxRetries) {
+          activeJobs[jobId].status = 'failed';
+          activeJobs[jobId].error = 'Сервер вернул ошибку ' + resp.status;
+          activeJobs[jobId].completedAt = Date.now();
+          updateJobStatusUI(jobId);
+          showToast('Ошибка получения статуса: HTTP ' + resp.status, 'error', true);
+          return;
+        }
+        if (!retryToastShown) {
+          showToast('Сервер недоступен, повторяем попытку...', 'refresh', false);
+          retryToastShown = true;
+        }
+        continue;
+      }
+      retries = 0; // сброс при успехе
+      
+      const data = await resp.json();
+      if (!activeJobs[jobId]) return;
+      activeJobs[jobId].status = data.status || 'pending';
+      activeJobs[jobId].progress = data.progress;
+      activeJobs[jobId].error = data.error_message;
+      activeJobs[jobId].stage = data.current_stage;
+      activeJobs[jobId].queuePosition = data.queue_position;
+      
+      // Сохраняем путь к результату при завершении
+      if (data.status === 'completed' && data.output_file_path) {
+        activeJobs[jobId].result = data.output_file_path;
+      }
+      
+      updateJobStatusUI(jobId);
+      
+      // Останавливаем polling когда job завершён или завершился ошибкой
+      if (['completed', 'failed', 'cancelled'].includes(activeJobs[jobId].status)) {
+        activeJobs[jobId].completedAt = Date.now();
+        // Показываем уведомление если успешно завершён
+        if (data.status === 'completed') {
+          setTimeout(() => {
+            showToast('✅ Перевод завершён! Нажмите "Скачать" для загрузки.', 'check_circle');
+            addLog('Файл готов к скачиванию!', 'text-[var(--c-status-success)] font-semibold');
+          }, 500);
+        } else if (data.status === 'failed') {
+          showToast('❌ Ошибка перевода: ' + friendlyError(data.error_message), 'error', true);
+        }
+        return;
+      }
+    } catch (e) {
+      if (!activeJobs[jobId]) return;
+      retries++;
+      if (retries > maxRetries) {
+        activeJobs[jobId].status = 'failed';
+        activeJobs[jobId].error = 'Ошибка соединения: ' + e.message;
+        activeJobs[jobId].completedAt = Date.now();
+        updateJobStatusUI(jobId);
+        showToast('Ошибка соединения с сервером', 'error', true);
+        addLog('Ошибка соединения: ' + e.message, 'text-[var(--c-error)]');
+        return;
+      }
+      if (!retryToastShown) {
+        showToast('Сервер недоступен, повторяем попытку...', 'refresh', false);
+        retryToastShown = true;
+      }
+      console.warn(`Повторная попытка ${retries}/${maxRetries} для job ${jobId}:`, e.message);
+    }
+  }
+  
+  // Достигнут таймаут 30 минут
+  if (!activeJobs[jobId]) return;
+  activeJobs[jobId].status = 'failed';
+  activeJobs[jobId].error = 'Превышено время ожидания (30 мин)';
+  activeJobs[jobId].completedAt = Date.now();
+  updateJobStatusUI(jobId);
+  showToast('❌ Превышено время ожидания перевода', 'error', true);
+  addLog('Таймаут: превышено время ожидания 30 мин', 'text-[var(--c-error)]');
+}
+
+window.downloadJob = async function(jobId) {
+  const job = activeJobs[jobId];
+  if (!job) return;
+  
+  try {
+    // Скачиваем через blob для корректной обработки заголовков Content-Disposition
+    const resp = await authFetch(`/job/${jobId}/download`);
+    
+    if (!resp.ok) {
+      // Уточняем причину ошибки — файл мог быть удалён сервером после предыдущего скачивания
+      let errorMsg = 'Ошибка загрузки файла';
+      if (resp.status === 404) {
+        errorMsg = 'Файл уже был загружен или удалён с сервера';
+      } else if (resp.status === 503) {
+        errorMsg = 'Сервис недоступен, попробуйте позже';
+      } else {
+        try {
+          const errData = await resp.json();
+          if (errData?.detail && errData.detail.includes('not found')) {
+            errorMsg = 'Файл уже был загружен или удалён с сервера';
+          }
+        } catch {}
+      }
+      showToast(errorMsg, 'error', true);
+      return;
+    }
+    
+    // Получаем имя файла из заголовка или генерируем
+    let filename = job.filename || `translated_${jobId}`;
+    const contentDisposition = resp.headers.get('Content-Disposition');
+    if (contentDisposition) {
+      // Сначала пробуем RFC 5987: filename*=UTF-8''percent-encoded
+      const rfc5987 = contentDisposition.match(/filename\*=(?:UTF-8|UTF-8'')?([^\s;]+)/i);
+      if (rfc5987 && rfc5987[1]) {
+        try {
+          filename = decodeURIComponent(rfc5987[1].replace(/['"]/g, ''));
+        } catch { /* fall through to legacy */ }
+      } else {
+        // Legacy: filename="..."
+        const match = contentDisposition.match(/filename[^;=\n]*=((['"])?([^\"]*)\1|[^\s;]+)/);
+        if (match && match[3]) filename = match[3];
+        else if (match && match[2]) filename = match[2];
+      }
+    }
+    
+    // Скачиваем через blob
+    const blob = await resp.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    }, 100);
+    
+    // Сразу убираем задачу из активных — файл скачан
+    delete activeJobs[jobId];
+    updateActiveJobsPanel();
+    
+  } catch (e) {
+    // Fallback: прямая ссылка на скачивание
+    showToast('Открываю ссылку для скачивания...', 'download');
+    window.open(`/job/${jobId}/download`, '_blank');
+    delete activeJobs[jobId];
+    updateActiveJobsPanel();
+  }
+};
+
+// Очистка завершённых jobs через час (профилактика утечек памяти)
+setInterval(() => {
+  const now = Date.now();
+  for (const jobId in activeJobs) {
+    if (activeJobs[jobId].completedAt && (now - activeJobs[jobId].completedAt > 3600000)) {
+      delete activeJobs[jobId];
+    }
+  }
+}, 300000);
+
+// Панель активных заданий
+function updateActiveJobsPanel() {
+  const panel = document.getElementById('activeJobsPanel');
+  const list = document.getElementById('activeJobsList');
+  const badge = document.getElementById('activeJobsBadge');
+  const now = Date.now();
+
+  // Показываем только незавершённые + завершённые (до очистки памяти через 1ч)
+  const visibleIds = Object.keys(activeJobs).filter(id => {
+    const job = activeJobs[id];
+    if (!job.completedAt) return true;
+    return (now - job.completedAt) < 3600000; // 1 час, синхронизировано с cleanup
+  });
+
+  if (visibleIds.length === 0) {
+    panel.classList.add('hidden');
+    badge.classList.add('hidden');
+    list.innerHTML = '';
+    return;
+  }
+
+  panel.classList.remove('hidden');
+  badge.classList.remove('hidden');
+  badge.textContent = `${visibleIds.length} ${pluralize(visibleIds.length, ['задание', 'задания', 'заданий'])}`;
+
+  // Удаляем элементы которых больше нет в visibleIds
+  const existingIds = Array.from(list.querySelectorAll('.job-item')).map(el => el.dataset.jobId);
+  for (const id of existingIds) {
+    if (!visibleIds.includes(id)) {
+      document.querySelector(`.job-item[data-job-id="${id}"]`)?.remove();
+    }
+  }
+
+  visibleIds.forEach(jobId => {
+    const job = activeJobs[jobId];
+    let item = list.querySelector(`.job-item[data-job-id="${jobId}"]`);
+    if (!item) {
+      item = document.createElement('div');
+      item.className = 'job-item relative p-3 border border-[var(--c-outline-variant)] rounded-lg bg-[var(--c-surface-container-lowest)]';
+      item.dataset.jobId = jobId;
+      item.innerHTML = `
+        <!-- Progress fill - fills from right to left, pale yellow -->
+        <div         id="progress-fill-${jobId}" class="absolute inset-y-0 left-0 transition-all duration-500 ease-out" style="width: 0%; background: color-mix(in srgb, var(--c-primary-container) 22%, transparent);"></div>
+        <!-- Action buttons -->
+        <button id="cancel-btn-${jobId}" class="cancel-btn absolute top-1.5 right-2 z-20 w-5 h-5 flex items-center justify-center rounded-full text-xs border border-[var(--c-outline)] text-[var(--c-on-surface-variant)] hover:bg-[var(--c-surface-container-highest)] active:scale-90 transition-all leading-none hidden" title="Отменить">✕</button>
+        <!-- Content sits on top of the fill -->
+        <div class="relative z-10 flex items-center justify-between pr-7">
+          <div class="flex items-center gap-2 min-w-0 flex-1">
+            <span class="material-symbols-outlined text-[var(--c-primary)] text-sm shrink-0" aria-hidden="true">description</span>
+            <p class="text-xs font-medium truncate">${escapeHtml(job.filename || 'Документ')}</p>
+          </div>
+          <div id="status-${jobId}" class="shrink-0 ml-2"></div>
+        </div>`;
+      list.appendChild(item);
+    }
+    updateJobStatusUI(jobId);
+  });
+}
+
+// Обновляем панель активных заданий автоматически каждые 3 секунды
+setInterval(updateActiveJobsPanel, 3000);
+
+// ── Event delegation for cancel button on job items ──
+document.getElementById('activeJobsList')?.addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('.cancel-btn');
+  if (!btn) return;
+  ev.stopPropagation();
+  const item = btn.closest('.job-item');
+  const jobId = item?.dataset?.jobId;
+  if (!jobId || !activeJobs[jobId]) return;
+
+  // Prevent double-action on rapid clicks
+  if (btn.disabled) return;
+
+  const s = activeJobs[jobId]?.status;
+  if (s !== 'pending' && s !== 'running') return;
+
+  btn.disabled = true;
+  btn.innerHTML = '...';
+  try {
+    const resp = await authFetch(`/job/${jobId}/cancel`, { method: 'POST' });
+    if (resp.ok) {
+      activeJobs[jobId].status = 'cancelled';
+      activeJobs[jobId].completedAt = Date.now();
+      updateJobStatusUI(jobId);
+      addLog(`Задание ${jobId.slice(0, 8)}… отменено`);
+    } else {
+      const err = await resp.json().catch(() => ({}));
+      showToast('Ошибка отмены: ' + (err.detail || resp.statusText), 'error', true);
+      btn.disabled = false;
+      btn.innerHTML = '✕';
+    }
+  } catch (e) {
+    showToast('Ошибка сети при отмене', 'error', true);
+    btn.disabled = false;
+    btn.innerHTML = '✕';
+  }
+});
+
+startBtn.addEventListener('click', async () => {
+  errorMsg.classList.add('hidden');
+
+  if (selectedFiles.length === 0) {
+    errorMsg.textContent = 'Выберите файл для перевода';
+    errorMsg.classList.remove('hidden');
+    return;
+  }
+
+  const sourceLang = document.getElementById('sourceLang').value;
+  const targetLang = document.getElementById('targetLang').value;
+  if (sourceLang === targetLang && sourceLang !== 'auto') {
+    showToast('Исходный и целевой языки не могут совпадать', 'error', true);
+    startBtn.disabled = false;
+    startBtn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">translate</span> Начать перевод';
+    return;
+  }
+  const style = (document.querySelector('.style-btn.active')?.dataset.style || 'TECHNICAL').toLowerCase();
+  const mode = document.querySelector('input[name="mode"]:checked')?.value || 'full';
+  const useGlossary = document.getElementById('glossaryToggle').checked;
+
+  startBtn.disabled = true;
+  startBtn.innerHTML = '<span class="material-symbols-outlined animate-spin" aria-hidden="true">refresh</span> Обработка...';
+
+  const filesToSend = [...selectedFiles];
+  let successCount = 0;
+  let errorCount = 0;
+  let processed = 0;
+  const total = filesToSend.length;
+
+  // Строим fileKey на основе уникальных атрибутов файла (не индекса!)
+  // Добавляем timestamp для защиты от коллизий при загрузке одинаковых файлов
+  const timestamp = Date.now();
+  const fileKeys = filesToSend.map((f, i) => f.name + '_' + f.size + '_' + f.lastModified + '_' + timestamp + '_' + i);
+
+  async function sendOne(file, fileKey) {
+    addLog(`Отправка файла на перевод: ${file.name}`);
+    // Показываем indeterminate пока идёт загрузка на сервер
+    updateFileCardProgress(fileKey, 'pending', null, null, null);
+
+    const form = new FormData();
+    form.append('file', file);
+    form.append('source_language', sourceLang);
+    form.append('target_language', targetLang);
+    form.append('translation_style', style);
+    form.append('translation_mode', mode);
+    form.append('use_glossary', String(useGlossary));
+    form.append('collection_id', document.getElementById('collectionSelect').value);
+    form.append('batch_size', '50');
+
+    const resp = await authFetch('/jobs', { method: 'POST', body: form });
+    if (!resp.ok) {
+      let detail = 'Ошибка сервера';
+      try { const err = await resp.json(); detail = err.detail || detail; } catch { detail = await resp.text().catch(() => detail); }
+      throw new Error(detail);
+    }
+    const data = await resp.json();
+    activeJobs[data.job_id] = { status: 'pending', filename: file.name, progress: 0, fileKey, queuePosition: data.queue_position };
+    fileJobMap[fileKey] = data.job_id;
+    updateActiveJobsPanel(); // показать карточку сразу с 0%, до первого poll
+    addLog(`Перевод запущен. Job ID: ${data.job_id}`, 'text-[var(--c-primary)] font-semibold');
+    pollJobStatus(data.job_id); // без задержки, poll сам сделает первый sleep
+  }
+
+  // Параллельная отправка с лимитом 3 одновременных
+  const CONCURRENCY = 3;
+  const results = [];
+  for (let i = 0; i < total; i += CONCURRENCY) {
+    const batch = filesToSend.slice(i, i + CONCURRENCY);
+    const promises = batch.map(async (file, batchIdx) => {
+      const fileKey = fileKeys[i + batchIdx];
+      try {
+        await sendOne(file, fileKey);
+        processed++;
+        startBtn.innerHTML = `<span class="material-symbols-outlined animate-spin" aria-hidden="true">refresh</span> Отправка ${processed}/${total}...`;
+        return 'success';
+      } catch (err) {
+        errorCount++;
+        if (errorMsg.textContent) errorMsg.textContent += '; ';
+        errorMsg.textContent += `${escapeHtml(file.name)}: ${err.message}`;
+        errorMsg.classList.remove('hidden');
+        addLog(`Ошибка: ${file.name} — ${err.message}`, 'text-[var(--c-error)]');
+        updateFileCardProgress(fileKey, 'failed', null, null, err.message);
+        processed++;
+        return 'error';
+      }
+    });
+    const batchResults = await Promise.all(promises);
+    results.push(...batchResults);
+  }
+
+  successCount = results.filter(r => r === 'success').length;
+
+  // Очищаем очередь — все задачи теперь в активных
+  selectedFiles = [];
+  renderFiles();
+
+  if (successCount > 0) {
+    showToast(`Отправлено ${successCount} ${pluralize(successCount, ['файл', 'файла', 'файлов'])} на перевод`, 'check_circle');
+  }
+  if (errorCount > 0) {
+    showToast(`Ошибка при отправке ${errorCount} ${pluralize(errorCount, ['файла', 'файлов', 'файлов'])}`, 'error', true);
+  }
+
+  startBtn.disabled = false;
+  startBtn.innerHTML = '<span class="material-symbols-outlined" aria-hidden="true">translate</span> Начать перевод';
+});
+
+// ══════════════════════════════════════════════════
+//  Toast
+// ══════════════════════════════════════════════════
+function showToast(text, icon, isError = false) {
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = 'toast flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg border ' +
+    (isError
+      ? 'bg-[var(--c-error)]/10 border-[var(--c-error)]/30 text-[var(--c-error)]'
+      : 'bg-[var(--c-surface-container-lowest)] border-[var(--c-outline-variant)] text-[var(--c-on-surface)]');
+  
+  const iconSpan = document.createElement('span');
+  iconSpan.className = 'material-symbols-outlined';
+  iconSpan.setAttribute('aria-hidden', 'true');
+  iconSpan.textContent = icon;
+  toast.appendChild(iconSpan);
+  
+  const textSpan = document.createElement('span');
+  textSpan.className = 'text-sm font-medium';
+  textSpan.textContent = text;
+  toast.appendChild(textSpan);
+  
+  container.appendChild(toast);
+  setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity .3s'; setTimeout(() => toast.remove(), 300); }, 4000);
+}
+
+// ══════════════════════════════════════════════════
+//  Tab switching
+// ══════════════════════════════════════════════════
+const filesTab = document.getElementById('filesTab');
+const glossaryTab = document.getElementById('glossaryTab');
+
+function switchTab(tab) {
+  const filesPage = document.getElementById('files-page');
+  const glossaryPage = document.getElementById('glossary-page');
+  const isFiles = tab === 'files';
+  filesPage.classList.toggle('hidden', !isFiles);
+  glossaryPage.classList.toggle('hidden', isFiles);
+  filesTab.classList.toggle('active', isFiles);
+  filesTab.classList.toggle('inactive', !isFiles);
+  glossaryTab.classList.toggle('active', !isFiles);
+  glossaryTab.classList.toggle('inactive', isFiles);
+  if (!isFiles) loadGlossary();
+}
+
+filesTab.addEventListener('click', () => switchTab('files'));
+glossaryTab.addEventListener('click', () => switchTab('glossary'));
+
+// ══════════════════════════════════════════════════
+//  Glossary Collections
+// ══════════════════════════════════════════════════
+let availableCollections = [];
+
+async function loadCollections() {
+  if (!isAuthenticated) return;
+  try {
+    const resp = await authFetch('/glossary/collections');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    availableCollections = (data.collections || []).filter(function(c) { return c.id !== 'default'; });
+    var opts = '<option value="">Общий глоссарий</option>';
+    availableCollections.forEach(function(c) {
+      opts += '<option value="' + c.id + '">' + escapeHtml(c.name) + '</option>';
+    });
+    document.getElementById('collectionSelect').innerHTML = opts;
+    var glossarySelect = document.getElementById('glossaryCollectionSelect');
+    if (glossarySelect) glossarySelect.innerHTML = opts;
+    var importSelect = document.getElementById('importCollectionSelect');
+    if (importSelect) importSelect.innerHTML = opts;
+
+    // Restore saved collection selection AFTER populating options
+    const savedTranslationCollection = localStorage.getItem('translationCollection');
+    const savedGlossaryCollection = localStorage.getItem('glossaryCollection');
+
+    var collSelect = document.getElementById('collectionSelect');
+    if (collSelect && savedTranslationCollection) collSelect.value = savedTranslationCollection;
+
+    var glossCollSelect = document.getElementById('glossaryCollectionSelect');
+    if (glossCollSelect && savedGlossaryCollection) {
+      glossCollSelect.value = savedGlossaryCollection;
+      currentGlossaryCollection = savedGlossaryCollection;
+    }
+
+    // Update currentGlossaryCollection from selected value
+    if (!currentGlossaryCollection) {
+      currentGlossaryCollection = document.getElementById('glossaryCollectionSelect') ? document.getElementById('glossaryCollectionSelect').value : '';
+    }
+
+    var group = document.getElementById('collectionGroup');
+    var toggle = document.getElementById('glossaryToggle');
+    group.classList.toggle('hidden', availableCollections.length === 0 || !toggle.checked);
+  } catch (e) {
+    console.debug('Failed to load collections:', e);
+  }
+}
+
+document.getElementById('glossaryCollectionSelect').addEventListener('change', function() {
+  currentGlossaryCollection = this.value;
+  saveSettings(); // Save selection change
+  loadGlossary();
+});
+
+document.getElementById('glossaryToggle').addEventListener('change', function() {
+  var group = document.getElementById('collectionGroup');
+  group.classList.toggle('hidden', availableCollections.length === 0 || !this.checked);
+});
+
+// ══════════════════════════════════════════════════
+//  Glossary CRUD
+// ══════════════════════════════════════════════════
+let glossaryEntries = [];
+let editingEntryId = null;
+var currentGlossaryCollection = '';
+
+async function loadGlossary() {
+  var tbody = document.getElementById('glossaryTableBody');
+  var collectionId = document.getElementById('glossaryCollectionSelect') ? document.getElementById('glossaryCollectionSelect').value : '';
+  currentGlossaryCollection = collectionId;
+  try {
+    var url = '/glossary';
+    if (collectionId) url += '?collection_id=' + encodeURIComponent(collectionId);
+    var resp = await authFetch(url);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    var data = await resp.json();
+    glossaryEntries = data.entries || [];
+    renderGlossary(document.getElementById('glossarySearch').value);
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-[var(--c-error)]">Ошибка загрузки: ' + escapeHtml(e.message) + '</td></tr>';
+  }
+}
+
+function renderGlossary(filter) {
+  const tbody = document.getElementById('glossaryTableBody');
+  const totalEl = document.getElementById('glossaryTotal');
+
+  let entries = glossaryEntries;
+  if (filter) {
+    const q = filter.toLowerCase();
+    entries = entries.filter(function(e) {
+      return (e.ru_word || '').toLowerCase().includes(q) ||
+        (e.en_word || '').toLowerCase().includes(q) ||
+        (e.sb_word || '').toLowerCase().includes(q) ||
+        (e.ch_word || '').toLowerCase().includes(q);
+    });
+  }
+
+  if (entries.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-[var(--c-secondary)]">' +
+      (filter ? 'Ничего не найдено' : 'Нет записей в глоссарии') +
+      '</td></tr>';
+    totalEl.textContent = '';
+    return;
+  }
+
+  function hl(text) {
+    if (!filter) return escapeHtml(text);
+    var escaped = escapeHtml(text);
+    var q = filter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    var re = new RegExp('(' + q.replace(/[<>]/g, '') + ')', 'gi');
+    return escaped.replace(re, '<mark class="glossary-hl">$1</mark>');
+  }
+
+  tbody.innerHTML = entries.map(function(e) {
+    return '<tr class="glossary-row border-b border-[var(--c-outline-variant)] last:border-b-0">' +
+      '<td class="px-4 py-3 text-xs text-[var(--c-secondary)] font-mono-sm">' + e.id + '</td>' +
+      '<td class="px-4 py-3 text-sm">' + hl(e.ru_word) + '</td>' +
+      '<td class="px-4 py-3 text-sm">' + hl(e.en_word) + '</td>' +
+      '<td class="px-4 py-3 text-sm">' + hl(e.sb_word) + '</td>' +
+      '<td class="px-4 py-3 text-sm">' + hl(e.ch_word) + '</td>' +
+      '<td class="px-4 py-3 text-right whitespace-nowrap">' +
+      '<button data-id="' + e.id + '" class="edit-entry-btn p-1 rounded text-[var(--c-secondary)] hover:text-[var(--c-primary)] hover:bg-[var(--c-surface-container-low)] transition-all" title="Редактировать">' +
+      '<span class="material-symbols-outlined text-lg" aria-hidden="true">edit</span></button>' +
+      '<button data-id="' + e.id + '" class="delete-entry-btn p-1 rounded text-[var(--c-secondary)] hover:text-[var(--c-error)] hover:bg-[var(--c-error)]/10 transition-all" title="Удалить">' +
+      '<span class="material-symbols-outlined text-lg" aria-hidden="true">delete</span></button>' +
+      '</td></tr>';
+  }).join('');
+
+  totalEl.textContent = 'Всего записей: ' + entries.length;
+
+  tbody.querySelectorAll('.edit-entry-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() { openGlossaryModal(parseInt(btn.dataset.id)); });
+  });
+  tbody.querySelectorAll('.delete-entry-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() { deleteGlossaryEntry(btn.dataset.id); });
+  });
+}
+
+document.getElementById('glossarySearch').addEventListener('input', function(e) {
+  renderGlossary(e.target.value);
+});
+
+function openGlossaryModal(id) {
+  editingEntryId = id;
+  var title = document.getElementById('glossaryModalTitle');
+  var ru = document.getElementById('glossaryFormRu');
+  var en = document.getElementById('glossaryFormEn');
+  var sb = document.getElementById('glossaryFormSb');
+  var ch = document.getElementById('glossaryFormCh');
+  var err = document.getElementById('glossaryFormError');
+  err.classList.add('hidden');
+
+  if (id != null) {
+    title.textContent = 'Редактировать запись';
+    var entry = glossaryEntries.find(function(e) { return e.id === id; });
+    if (entry) {
+      ru.value = entry.ru_word || '';
+      en.value = entry.en_word || '';
+      sb.value = entry.sb_word || '';
+      ch.value = entry.ch_word || '';
+    }
+  } else {
+    title.textContent = 'Добавить запись';
+    ru.value = '';
+    en.value = '';
+    sb.value = '';
+    ch.value = '';
+  }
+  document.getElementById('glossaryModal').classList.remove('hidden');
+}
+
+function closeGlossaryModal() {
+  document.getElementById('glossaryModal').classList.add('hidden');
+  editingEntryId = null;
+}
+
+document.getElementById('addGlossaryBtn').addEventListener('click', function() { openGlossaryModal(null); });
+document.getElementById('glossaryModalClose').addEventListener('click', closeGlossaryModal);
+document.getElementById('glossaryModalCancel').addEventListener('click', closeGlossaryModal);
+document.getElementById('glossaryModal').addEventListener('mousedown', function(e) {
+  if (e.target === e.currentTarget) closeGlossaryModal();
+});
+
+document.getElementById('glossaryModalSave').addEventListener('click', async function() {
+  var ru = document.getElementById('glossaryFormRu').value.trim();
+  var en = document.getElementById('glossaryFormEn').value.trim();
+  var sb = document.getElementById('glossaryFormSb').value.trim();
+  var ch = document.getElementById('glossaryFormCh').value.trim();
+  var err = document.getElementById('glossaryFormError');
+
+  if (!ru || !en || !sb || !ch) {
+    err.textContent = 'Все поля обязательны для заполнения';
+    err.classList.remove('hidden');
+    return;
+  }
+
+  var body = { ru_word: ru, en_word: en, sb_word: sb, ch_word: ch };
+
+  try {
+    var resp;
+    if (editingEntryId != null) {
+      var colId = currentGlossaryCollection || '';
+      var putUrl = '/glossary/' + editingEntryId;
+      if (colId) putUrl += '?collection_id=' + encodeURIComponent(colId);
+      resp = await authFetch(putUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } else {
+      var colId = currentGlossaryCollection || '';
+      var url = '/glossary';
+      if (colId) url += '?collection_id=' + encodeURIComponent(colId);
+      resp = await authFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    }
+    if (!resp.ok) {
+      var data = await resp.json().catch(function() { return {}; });
+      throw new Error(data.detail || 'Ошибка сервера');
+    }
+    closeGlossaryModal();
+    showToast('Запись сохранена', 'check_circle');
+    await loadGlossary();
+  } catch (e) {
+    err.textContent = e.message;
+    err.classList.remove('hidden');
+  }
+});
+
+async function deleteGlossaryEntry(id) {
+  if (!confirm('Удалить запись из глоссария?')) return;
+  try {
+    var colId = currentGlossaryCollection || '';
+    var url = '/glossary/' + id;
+    if (colId) url += '?collection_id=' + encodeURIComponent(colId);
+    var resp = await authFetch(url, { method: 'DELETE' });
+    if (!resp.ok) throw new Error('Ошибка сервера');
+    showToast('Запись удалена', 'delete');
+    await loadGlossary();
+  } catch (e) {
+    showToast('Ошибка удаления: ' + e.message, 'error', true);
+  }
+}
+
+// ══════════════════════════════════════════════════
+//  Glossary Import / Export
+// ══════════════════════════════════════════════════
+
+document.getElementById('exportGlossaryBtn').addEventListener('click', async function() {
+  var colId = currentGlossaryCollection || '';
+  var url = '/glossary/export';
+  if (colId) url += '?collection_id=' + encodeURIComponent(colId);
+  try {
+    var resp = await authFetch(url);
+    if (!resp.ok) {
+      var data = await resp.json().catch(function() { return {}; });
+      throw new Error(data.detail || 'Ошибка экспорта');
+    }
+    var blob = await resp.blob();
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = colId ? 'glossary_' + colId + '.csv' : 'glossary.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+    showToast('Экспорт завершён', 'check_circle');
+  } catch (e) {
+    showToast('Ошибка экспорта: ' + e.message, 'error', true);
+  }
+});
+
+function openImportModal() {
+  var select = document.getElementById('importCollectionSelect');
+  select.value = currentGlossaryCollection || '';
+  document.getElementById('importFileInput').value = '';
+  document.getElementById('importFormError').classList.add('hidden');
+  document.getElementById('glossaryImportModal').classList.remove('hidden');
+}
+
+function closeImportModal() {
+  document.getElementById('glossaryImportModal').classList.add('hidden');
+}
+
+document.getElementById('importGlossaryBtn').addEventListener('click', openImportModal);
+document.getElementById('glossaryImportClose').addEventListener('click', closeImportModal);
+document.getElementById('glossaryImportCancel').addEventListener('click', closeImportModal);
+document.getElementById('glossaryImportModal').addEventListener('mousedown', function(e) {
+  if (e.target === e.currentTarget) closeImportModal();
+});
+
+document.getElementById('glossaryImportSubmit').addEventListener('click', async function() {
+  var fileInput = document.getElementById('importFileInput');
+  var file = fileInput.files[0];
+  if (!file) {
+    document.getElementById('importFormError').textContent = 'Выберите CSV файл';
+    document.getElementById('importFormError').classList.remove('hidden');
+    return;
+  }
+
+  var colId = document.getElementById('importCollectionSelect').value;
+  var formData = new FormData();
+  formData.append('file', file);
+  formData.append('collection_id', colId);
+
+  try {
+    var resp = await authFetch('/glossary/import', {
+      method: 'POST',
+      body: formData,
+    });
+    if (!resp.ok) {
+      var data = await resp.json().catch(function() { return {}; });
+      throw new Error(data.detail || 'Ошибка импорта');
+    }
+    var result = await resp.json();
+    closeImportModal();
+    var msg = 'Импортировано: ' + result.imported + ' записей';
+    if (result.errors && result.errors.length) {
+      msg += ' (' + result.errors.length + ' ошибок)';
+      showToast(msg, 'warning');
+      result.errors.slice(0, 5).forEach(function(err) {
+        showToast(err, 'error', true);
+      });
+      if (result.errors.length > 5) {
+        showToast('И ещё ' + (result.errors.length - 5) + ' ошибок — подробнее в журнале', 'info', false);
+      }
+    } else {
+      showToast(msg, 'check_circle');
+    }
+    await loadGlossary();
+  } catch (e) {
+    document.getElementById('importFormError').textContent = e.message;
+    document.getElementById('importFormError').classList.remove('hidden');
+  }
+});
+</script>
+</body>
+</html>
