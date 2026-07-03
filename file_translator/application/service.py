@@ -27,6 +27,7 @@ from file_translator.domain.models import (
     TranslationStyle,
 )
 from file_translator.domain.validation import ValidationError, ValidationReport, ValidationSeverity
+from file_translator.infrastructure.language_validator import detect_language as _detect_lang, LINGUA_AVAILABLE as _LINGUA_AVAILABLE
 
 logger = logging.getLogger(__name__)
 
@@ -316,7 +317,25 @@ class TranslationService:
                         filename=filename,
                     )
             
-            # Step 5: Split into batches
+            # Step 5: Filter units by source language (FILTER_BY_SOURCE mode)
+            if translation_mode == TranslationMode.FILTER_BY_SOURCE:
+                skipped_ids: set[str] = set()
+                filtered: list[TextUnit] = []
+                for u in translatable_units:
+                    detected = _detect_lang(u.original_text)
+                    if detected is None or detected == source_lang.value:
+                        filtered.append(u)
+                    else:
+                        skipped_ids.add(u.id)
+                if skipped_ids:
+                    logger.info(
+                        f"FILTER_BY_SOURCE: server-side filter skipped "
+                        f"{len(skipped_ids)}/{len(translatable_units)} units "
+                        f"(detected language ≠ {source_lang.value})"
+                    )
+                translatable_units = filtered
+
+            # Step 6: Split into batches
             batch_size = request.batch_size
             batches = self._create_batches(translatable_units, batch_size, source_lang, target_lang, translation_style, translation_mode, request.use_glossary)
             
@@ -327,7 +346,7 @@ class TranslationService:
                 details={"batch_count": len(batches), "batch_size": batch_size},
             )
             
-            # Step 6: Translate each batch
+            # Step 7: Translate each batch
             all_translations: dict[str, str] = {}
             total_batches = len(batches)
             
@@ -418,13 +437,13 @@ class TranslationService:
                     duration_seconds=time.time() - start_time,
                 )
             
-            # Step 7: Apply translations back to document
+            # Step 8: Apply translations back to document
             logger.info(f"Applying {len(all_translations)} translations")
             translated_data = translator.translate(
                 extracted_data, all_translations,
             )
             
-            # Step 8: Save the translated document
+            # Step 9: Save the translated document
             output_suffix = self._resolve_output_suffix(input_path.suffix.lower())
             output_path = input_path.parent / f"{input_path.stem}_translated{output_suffix}"
             

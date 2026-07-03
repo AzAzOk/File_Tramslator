@@ -15,7 +15,7 @@ File Translator v2.0.0 — FastAPI backend that translates DOCX files via LLM (O
 - Auth: stub only (no real auth)
 
 ## Key Decisions
-- FILTER_BY_SOURCE done entirely in LLM prompt (no server-side text filtering)
+- FILTER_BY_SOURCE: **server-side + prompt**. Before batching, `service.py` runs `detect_language()` on each text unit and skips those not matching source language. The LLM prompt still carries the filter instruction as a safety net. This fixes unreliable LLM-only filtering (Russian → Chinese, missed English).
 - Boundary markers `<<<INPUT_TEXT>>>` / `<<<END_INPUT_TEXT>>>` wrap all input data
 - `_clean_model_output()` strips markers + common boilerplate (`"Вот перевод:"`, `"Sure, here is:"`)
 - Style prompts: TECHNICAL (GOST/ISO), LEGAL (formal), MIXED (auto-detect)
