@@ -154,19 +154,13 @@ class DocxTranslator(DocumentTranslator):
                 "xliff_path": str(xliff_path),
             }
 
-        except TikalNotAvailableError as e:
-            logger.error(f"Okapi not available: {e}")
-            self._cleanup()
-            raise DocumentParseError(
-                details=f"Okapi Tikal required: {e}"
-            ) from e
-        except OkapiServiceError as e:
+        except (TikalNotAvailableError, OkapiServiceError, Exception) as e:
             logger.error(f"Okapi extraction failed: {e}")
             self._cleanup()
-            raise DocumentParseError(details=str(e)) from e
-        except Exception as e:
-            logger.error(f"Extraction failed: {e}")
-            self._cleanup()
+            if isinstance(e, TikalNotAvailableError):
+                raise DocumentParseError(
+                    details=f"Okapi Tikal required: {e}"
+                ) from e
             raise DocumentParseError(details=str(e)) from e
 
     def translate(self, extracted_data: dict, translations: dict[str, str],
@@ -349,12 +343,12 @@ class DocxTranslator(DocumentTranslator):
 
 
     def _cleanup(self):
-        """Clean up temporary files."""
-        if self._temp_dir and self._temp_dir.exists():
-            try:
+        """Clean up temporary files. Never raises."""
+        try:
+            if self._temp_dir and self._temp_dir.exists():
                 shutil.rmtree(str(self._temp_dir))
                 logger.debug(f"Cleaned up temp directory: {self._temp_dir}")
-            except Exception as e:
-                logger.warning(f"Cleanup failed: {e}")
+        except Exception as e:
+            logger.warning(f"Cleanup failed: {e}")
         self._temp_dir = None
         self._document_path = None

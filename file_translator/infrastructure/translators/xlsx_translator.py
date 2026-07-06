@@ -292,71 +292,75 @@ class XlsxTranslator(DocumentTranslator):
 
         self._temp_dir = Path(tempfile.mkdtemp(prefix="xlsx_"))
 
-        actual_path: Path = file_path
-        if file_path.suffix.lower() == ".xls":
-            from file_translator.infrastructure.converters.doc_to_docx_converter import (
-                LibreOfficeConverter,
-            )
-            converted = LibreOfficeConverter.convert(file_path, self._temp_dir)
-            actual_path = converted
-            self._converted_path = converted
-            logger.info(f"Converted .xls to .xlsx: {converted}")
-
         try:
-            with zf.ZipFile(str(actual_path), "r") as z:
-                archive_data: dict[str, bytes] = {name: z.read(name) for name in _find_xml_files(z)}
-        except Exception as e:
-            raise DocumentOpenError(
-                file_path=str(actual_path),
-                reason=f"Failed to read XLSX archive: {e}",
+            actual_path: Path = file_path
+            if file_path.suffix.lower() == ".xls":
+                from file_translator.infrastructure.converters.doc_to_docx_converter import (
+                    LibreOfficeConverter,
+                )
+                converted = LibreOfficeConverter.convert(file_path, self._temp_dir)
+                actual_path = converted
+                self._converted_path = converted
+                logger.info(f"Converted .xls to .xlsx: {converted}")
+
+            try:
+                with zf.ZipFile(str(actual_path), "r") as z:
+                    archive_data: dict[str, bytes] = {name: z.read(name) for name in _find_xml_files(z)}
+            except Exception as e:
+                raise DocumentOpenError(
+                    file_path=str(actual_path),
+                    reason=f"Failed to read XLSX archive: {e}",
+                )
+
+            classifier = XlsxContentClassifier()
+            classified_sources = classifier.classify(archive_data)
+
+            # Only TEXT sources become translatable TextUnits
+            text_units: list[TextUnit] = []
+            skipped_count = 0
+            for src in classified_sources:
+                if src.category == Category.TEXT and src.should_translate:
+                    text_units.append(TextUnit(
+                        id=src.id,
+                        original_text=src.original_text,
+                        path=src.path,
+                        metadata={
+                            **src.metadata,
+                            "source_type": src.source_type.value,
+                            "category": src.category.value,
+                        },
+                    ))
+                else:
+                    skipped_count += 1
+
+            if skipped_count:
+                logger.info(
+                    "Content classifier skipped %d non-text sources "
+                    "(formulas, numbers, errors, …)",
+                    skipped_count,
+                )
+
+            metadata = DocumentMetadata(
+                has_tables=True,
+                page_count=len(text_units),
             )
 
-        classifier = XlsxContentClassifier()
-        classified_sources = classifier.classify(archive_data)
-
-        # Only TEXT sources become translatable TextUnits
-        text_units: list[TextUnit] = []
-        skipped_count = 0
-        for src in classified_sources:
-            if src.category == Category.TEXT and src.should_translate:
-                text_units.append(TextUnit(
-                    id=src.id,
-                    original_text=src.original_text,
-                    path=src.path,
-                    metadata={
-                        **src.metadata,
-                        "source_type": src.source_type.value,
-                        "category": src.category.value,
-                    },
-                ))
-            else:
-                skipped_count += 1
-
-        if skipped_count:
             logger.info(
-                "Content classifier skipped %d non-text sources "
-                "(formulas, numbers, errors, …)",
-                skipped_count,
+                "XLSX extraction complete: %d text units from %s",
+                len(text_units), actual_path.name,
             )
 
-        metadata = DocumentMetadata(
-            has_tables=True,
-            page_count=len(text_units),
-        )
-
-        logger.info(
-            "XLSX extraction complete: %d text units from %s",
-            len(text_units), actual_path.name,
-        )
-
-        return {
-            "text_units": text_units,
-            "metadata": metadata,
-            "temp_dir": str(self._temp_dir),
-            "archive_data": archive_data,
-            "document_path": str(actual_path),
-            "classified_sources": classified_sources,
-        }
+            return {
+                "text_units": text_units,
+                "metadata": metadata,
+                "temp_dir": str(self._temp_dir),
+                "archive_data": archive_data,
+                "document_path": str(actual_path),
+                "classified_sources": classified_sources,
+            }
+        except Exception:
+            self._cleanup()
+            raise
 
     def translate(self, extracted_data: dict[str, Any],
                   translations: dict[str, str],
@@ -429,9 +433,10 @@ class XlsxTranslator(DocumentTranslator):
     # ── Private helpers ──
 
     def _cleanup(self):
-        if self._temp_dir and self._temp_dir.exists():
-            try:
+        """Clean up temporary files. Never raises."""
+        try:
+            if self._temp_dir and self._temp_dir.exists():
                 shutil.rmtree(str(self._temp_dir))
-            except Exception as e:
-                logger.warning(f"Cleanup failed: {e}")
+        except Exception as e:
+            logger.warning(f"Cleanup failed: {e}")
         self._temp_dir = None
