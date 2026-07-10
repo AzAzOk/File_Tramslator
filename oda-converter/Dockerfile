@@ -68,5 +68,6 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
 
 EXPOSE 5000
 
-# Start Xvfb as a persistent background process, then run the server directly
-CMD ["bash", "-c", "chmod 777 /data && Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp & sleep 2 && exec python3 /app/server.py"]
+# Start Xvfb in background, poll until the X lock file appears (confirms ready),
+# then launch the server. This is more reliable than xvfb-run which can hang on wait().
+CMD bash -c "chmod 777 /data && Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp & while [ ! -f /tmp/.X99-lock ]; do sleep 0.2; done && exec python3 /app/server.py"

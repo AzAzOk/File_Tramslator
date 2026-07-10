@@ -25,7 +25,7 @@ _ODA_CONVERTER_URL = os.environ.get("ODA_CONVERTER_URL")
 
 # Default install paths per platform
 _DEFAULT_PATHS: dict[str, str] = {
-    "win32": r"C:\Program Files\ODA\ODAFileConverter\ODAFileConverter.exe",
+    # "win32": r"C:\Program Files\ODA\ODAFileConverter\ODAFileConverter.exe",
     "linux": "/usr/bin/ODAFileConverter",
 }
 
@@ -40,7 +40,7 @@ def _find_converter() -> str | None:
         return default
 
     alternatives = [
-        r"C:\Program Files\ODA\ODAFileConverter 26.9.0\ODAFileConverter.exe",
+        # r"C:\Program Files\ODA\ODAFileConverter 26.9.0\ODAFileConverter.exe",
         "/usr/local/bin/ODAFileConverter",
         "/usr/bin/odafc",
     ]
@@ -63,15 +63,16 @@ def _find_converter() -> str | None:
 
 
 def is_available() -> bool:
-    """Check if ODAFileConverter is reachable (HTTP or local)."""
+    """Check if ODAFileConverter is reachable (HTTP or local).
+
+    In HTTP mode (ODA_CONVERTER_URL set), skips the health check —
+    the caller already handles conversion failures gracefully via
+    ``dwg_to_dxf()`` / ``dxf_to_dwg()`` which return ``None`` / ``False``.
+    The pre-check was causing false negatives (service restarting,
+    temporary blip) that blocked all DWG processing unnecessarily.
+    """
     if _ODA_CONVERTER_URL:
-        try:
-            req = urllib.request.Request(f"{_ODA_CONVERTER_URL}/health")
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = json.loads(resp.read())
-                return data.get("available", False)
-        except Exception:
-            return False
+        return True
     return _find_converter() is not None
 
 
