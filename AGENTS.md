@@ -23,7 +23,7 @@ File Translator v2.0.0 — FastAPI backend that translates DOCX files via LLM (O
 - JSON robustness: `_fix_json_syntax()` inserts missing commas between `}{`, `first_brace`/`last_brace` extraction
 - max_file_size = 128 MB
 - Download uses `Content-Disposition: attachment`
-- Output format mapping: DXF/DWG→.dwg, PDF→.pdf, DOCX/DOC→.docx, XLSX/XLS→.xlsx
+- Output format mapping: DXF→.dwg, DWG→.dwg, PDF→.pdf, DOCX/DOC→.docx, XLSX/XLS→.xlsx
 
 ## History of Changes (pre‑Okapi era)
 > **Note**: The entries below describe the **old architecture** where DOCX XML was manipulated directly via ElementTree. As of 2026-06-23, **all DOCX XML manipulation is delegated to Okapi Tikal CLI** (`okapi_service.py`). These historical entries are kept for context but the code no longer contains `_merge_runs_within_paragraph`, `_extract_from_paragraphs`, `_distribute_words`, or `_register_all_namespaces`. The only remaining direct fix is `_post_process_docx()` (CJK fonts + table heights).
@@ -51,7 +51,9 @@ File Translator v2.0.0 — FastAPI backend that translates DOCX files via LLM (O
 ### Relevant files
 - `file_translator/infrastructure/translators/docx_translator.py` — all DOCX extraction/save logic
 - `file_translator/infrastructure/providers/openai_provider.py` — boundary markers, style prompts, temperature, JSON fix, FILTER_BY_SOURCE
-- `file_translator/application/service.py` — output format map (`_OUTPUT_FORMAT_MAP`)
+- `file_translator/application/service.py` — `_OUTPUT_FORMAT_MAP`: `.dxf`→`.dwg`, `.dwg`→`.dwg`
+- `file_translator/infrastructure/backends/ezdxf_backend.py` — `save()`: when DWG conversion fails (ODA unavailable), **falls back to .dxf output** instead of raising error. Logs warning and renames temp DXF to output path with `.dxf` extension.
+- `oda-converter/server.py` — enhanced logging: logs request params, file paths, success/failure status, exceptions. Format: `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"`
 - `file_translator/application/schemas.py` — version 2.0.0, GlossaryUpdateSchema
 - `file_translator/presentation/api/app.py` — glossary CRUD, import/export stubs, download
 

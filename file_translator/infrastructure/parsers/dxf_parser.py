@@ -1,17 +1,27 @@
-"""DXF parser - reads DXF files into domain models.
+"""DXF parser — reads DXF files into domain models.
 
-Architecture:
-- Parses DXF text entities (TEXT, MTEXT, DIMENSION, etc.) into domain models.
-- Handles both ASCII and binary DXF formats.
-- Extracts text content with full context (layer, block, position, formatting).
+This module provides two parsers:
+
+1. ``DxfParser`` (BACKWARD-COMPATIBLE) — returns ``DxfDocument``.
+   Used by the existing ``DxfTranslator`` via ``DocumentTranslator``.
+
+2. ``DxfDocumentParser`` (NEW) — implements ``IParser``, returns ``Document``.
+   Used by the new pipeline via ``FormatRegistry``.
+
+Both use ``EzdxfBackend`` internally for actual DXF I/O.
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
 
+from file_translator.domain.document_model import (
+    Document,
+    EntityType,
+    TranslatableEntity,
+    TranslationStatus,
+)
 from file_translator.domain.dxf_models import (
     DxfBlock,
     DxfDimension,
@@ -23,8 +33,24 @@ from file_translator.domain.dxf_models import (
     DxfTextPosition,
     DxfTextProperties,
 )
+from file_translator.domain.interfaces import IParser
+from file_translator.infrastructure.backends.ezdxf_backend import EzdxfBackend
 
 logger = logging.getLogger(__name__)
+
+
+# ── shared helpers ──
+
+_dxf_type_to_entity_type: dict[str, DxfEntityType] = {
+    "TEXT": DxfEntityType.TEXT,
+    "MTEXT": DxfEntityType.MTEXT,
+    "ATTRIB": DxfEntityType.ATTRIB,
+    "ATTDEF": DxfEntityType.ATTDEF,
+    "DIMENSION": DxfEntityType.DIMENSION,
+}
+
+
+# ── backward-compatible DxfParser (returns DxfDocument) ──
 
 
 class DxfParseError(Exception):
@@ -33,72 +59,152 @@ class DxfParseError(Exception):
 
 
 class DxfParser:
-    """Parser for DXF files.
-    
-    Reads DXF group code pairs and produces DxfDocument domain models.
-    Currently a stub returning empty structures — real parsing to follow.
+    """Backward-compatible parser returning ``DxfDocument``.
+
+    Used by ``DxfTranslator`` (the old ``DocumentTranslator``-based path).
     """
-    
+
+    def __init__(self) -> None:
+        self._backend = EzdxfBackend()
+
     def parse(self, file_path: str | Path) -> DxfDocument:
-        """Parse a DXF file into a DxfDocument.
-        
-        Args:
-            file_path: Path to the .dxf file.
-            
-        Returns:
-            DxfDocument with all text-bearing entities extracted.
-            
-        Raises:
-            DxfParseError: If the file cannot be parsed.
-        """
+        """Parse a DXF file into a ``DxfDocument``."""
         path = Path(file_path)
         if not path.exists():
             raise DxfParseError(f"DXF file not found: {path}")
-        
-        if not path.suffix.lower() in (".dxf",):
-            raise DxfParseError(f"Not a DXF file: {path.suffix}")
-        
-        logger.info(f"Parsing DXF: {path.name}")
-        return self._parse_file(path)
-    
-    def _parse_file(self, path: Path) -> DxfDocument:
-        """Parse the DXF file content.
-        
-        TODO: Implement actual DXF group code parsing:
-            1. Read all lines/group codes
-            2. Find ENTITIES section
-            3. Extract TEXT, MTEXT, DIMENSION, ATTRIB, ATTDEF entities
-            4. Extract blocks and their text entities
-            5. Extract layers
-            6. Return populated DxfDocument
-        """
+        if path.suffix.lower() not in (".dxf", ".dwg"):
+            raise DxfParseError(f"Unsupported format: {path.suffix}")
+
+        return self._parse_to_dxf_doc(path)
+
+    def _parse_to_dxf_doc(self, path: Path) -> DxfDocument:
+        dxf_doc = self._backend.open(path)
         doc = DxfDocument(file_path=str(path.absolute()))
-        
-        # Stub: detect format version (placeholder)
-        doc.format_version = self._detect_format(path)
-        
+        doc.format_version = dxf_doc.dxfversion
+
+        text_entities: list[DxfTextEntity] = []
+        dimensions: list[DxfDimension] = []
+
+        for raw_entity, source in self._backend.iter_entities(dxf_doc):
+            text = self._backend.get_text(raw_entity)
+            if not text.strip():
+                continue
+
+            handle = self._backend.get_handle(raw_entity)
+            layer = self._backend.get_layer(raw_entity)
+            dxf_type = raw_entity.dxftype() if hasattr(raw_entity, "dxftype") else "TEXT"
+
+            entity_type = _dxf_type_to_entity_type.get(dxf_type, DxfEntityType.TEXT)
+
+            if dxf_type == "DIMENSION":
+                dim = DxfDimension(
+                    handle=handle,
+                    layer=layer,
+                    original_text=text,
+                )
+                dimensions.append(dim)
+            else:
+                te = DxfTextEntity(
+                    handle=handle,
+                    layer=layer,
+                    entity_type=entity_type,
+                    original_text=text,
+                )
+                text_entities.append(te)
+
+        doc.entities = text_entities + dimensions
+        logger.info("Parsed %d entities from %s", len(doc.entities), path.name)
         return doc
-    
-    def _detect_format(self, path: Path) -> str:
-        """Detect DXF format version from header.
-        
-        TODO: Read HEADER section $ACADVER variable.
-        """
-        return "AC1027"  # Default: AutoCAD 2013
-    
+
     def validate_structure(self, file_path: str | Path) -> bool:
-        """Quick validation that the file is a valid DXF.
-        
-        Checks: file exists, has .dxf extension, starts with group code 0.
-        """
+        """Quick validation that the file is a valid DXF."""
         path = Path(file_path)
         if not path.exists() or path.suffix.lower() != ".dxf":
             return False
-        
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                lines = [next(f).strip() for _ in range(20)]
-            # DXF files start with group code 0 followed by SECTION
-            return "0" in lines and "SECTION" in lines
+            self._backend.open(path)
+            return True
         except Exception:
             return False
+
+
+# ── new IParser implementation (returns Document) ──
+
+
+class DxfDocumentParser(IParser):
+    """IParser implementation for DXF, returns universal ``Document``.
+
+    Registered in ``FormatRegistry`` for use by the new pipeline.
+    """
+
+    def __init__(self) -> None:
+        self._backend = EzdxfBackend()
+
+    def parse(self, path: Path) -> Document:
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"DXF file not found: {path}")
+
+        dxf_doc = self._backend.open(path)
+        entities: list[TranslatableEntity] = []
+        seen_texts: dict[str, TranslatableEntity] = {}
+        counter = 0
+
+        for raw_entity, source in self._backend.iter_entities(dxf_doc):
+            text = self._backend.get_text(raw_entity)
+            if not text.strip():
+                continue
+
+            handle = self._backend.get_handle(raw_entity)
+            layer = self._backend.get_layer(raw_entity)
+            dxf_type = raw_entity.dxftype() if hasattr(raw_entity, "dxftype") else "TEXT"
+
+            # Dedup identical text → group handles
+            if text in seen_texts:
+                seen_texts[text].handles.append(handle)
+                continue
+
+            entity_id = f"dxf_{counter}"
+            counter += 1
+
+            et = self._map_type(dxf_type)
+            te = TranslatableEntity(
+                id=entity_id,
+                handles=[handle],
+                type=et,
+                text=text,
+                translation_status=TranslationStatus.PENDING,
+                metadata={
+                    "dxf_type": dxf_type,
+                    "layer": layer,
+                    "source": source,
+                    "handle": handle,
+                },
+            )
+            entities.append(te)
+            seen_texts[text] = te
+
+        return Document(
+            schema_version="1.0",
+            metadata={
+                "file_path": str(path.absolute()),
+                "format": "DXF",
+                "format_version": dxf_doc.dxfversion,
+                "entity_count": len(entities),
+            },
+            entities=entities,
+        )
+
+    def capabilities(self) -> set[str]:
+        return {"blocks", "attributes", "tables"}
+
+    @staticmethod
+    def _map_type(dxf_type: str) -> EntityType:
+        return {
+            "TEXT": EntityType.TEXT,
+            "MTEXT": EntityType.MTEXT,
+            "ATTRIB": EntityType.ATTRIB,
+            "ATTDEF": EntityType.ATTDEF,
+            "DIMENSION": EntityType.DIMENSION,
+            "PROXY": EntityType.TABLE_CELL,
+        }.get(dxf_type, EntityType.TEXT)

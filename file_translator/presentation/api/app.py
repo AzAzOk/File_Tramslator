@@ -404,10 +404,10 @@ async def create_translation_job(
             detail="Filename is required"
         )
     ext = Path(file.filename).suffix.lower()
-    if ext not in ('.docx', '.doc', '.xlsx', '.xls'):
+    if ext not in ('.docx', '.doc', '.xlsx', '.xls', '.dxf', '.dwg'):
         raise HTTPException(
             status_code=400,
-            detail="Only DOCX, DOC, XLSX, and XLS files are currently supported"
+            detail="Only DOCX, DOC, XLSX, XLS, DXF and DWG files are currently supported"
         )
 
     await _check_file_size(file)

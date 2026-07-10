@@ -37,6 +37,9 @@ from file_translator.infrastructure.classifiers.xlsx_content_classifier import (
 
 logger = logging.getLogger(__name__)
 
+# Safety limit: reject archives with uncompressed XML content over 256 MB
+_MAX_ARCHIVE_XML_SIZE = 256 * 1024 * 1024  # 256 MB
+
 _NSMAP = {
     "s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
     "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
@@ -54,8 +57,17 @@ etree.register_namespace("r", "http://schemas.openxmlformats.org/officeDocument/
 
 
 def _find_xml_files(z: zf.ZipFile) -> list[str]:
-    """Return all XML and .rels file paths inside the archive."""
-    return [n for n in z.namelist() if n.lower().endswith((".xml", ".rels"))]
+    """Return all XML and .rels file paths inside the archive, safe from ZipSlip."""
+    result = []
+    for n in z.namelist():
+        if not n.lower().endswith((".xml", ".rels")):
+            continue
+        name = n.replace("\\", "/")
+        if ".." in name.split("/"):
+            logger.warning("Skipping ZipSlip path in archive: %s", n)
+            continue
+        result.append(n)
+    return result
 
 
 def _parse_xml(data: bytes) -> etree._Element:
@@ -304,7 +316,16 @@ class XlsxTranslator(DocumentTranslator):
 
         try:
             with zf.ZipFile(str(actual_path), "r") as z:
-                archive_data: dict[str, bytes] = {name: z.read(name) for name in _find_xml_files(z)}
+                names = _find_xml_files(z)
+                total_size = sum(z.getinfo(n).file_size for n in names)
+                if total_size > _MAX_ARCHIVE_XML_SIZE:
+                    raise DocumentOpenError(
+                        file_path=str(actual_path),
+                        reason=f"XLSX XML content too large ({total_size / 1024 / 1024:.1f} MB; limit {_MAX_ARCHIVE_XML_SIZE / 1024 / 1024:.0f} MB)",
+                    )
+                archive_data: dict[str, bytes] = {name: z.read(name) for name in names}
+        except DocumentOpenError:
+            raise
         except Exception as e:
             raise DocumentOpenError(
                 file_path=str(actual_path),

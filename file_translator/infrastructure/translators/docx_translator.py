@@ -95,6 +95,7 @@ class DocxTranslator(DocumentTranslator):
         """
         logger.info(f"Extracting text via Okapi: {file_path}")
 
+        self._cleanup()
         self._temp_dir = Path(tempfile.mkdtemp(prefix="docx_okapi_"))
         self._document_path = file_path
 

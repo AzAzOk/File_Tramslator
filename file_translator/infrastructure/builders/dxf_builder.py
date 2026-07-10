@@ -1,19 +1,22 @@
-"""DXF builder - writes domain models back to DXF files.
+"""DxfBuilder — writes DxfDocument back to DXF using ezdxf.
 
-Architecture:
-- Takes translated DxfDocument and writes back to DXF format.
-- Preserves non-text structure exactly (positions, layers, blocks, dimensions).
-- Replaces original text with translated text in ENTITIES and BLOCK sections.
+Existing class kept for backward compatibility with DxfTranslator.
+New code should use DxfParser + DxfUpdater directly.
 """
 
 from __future__ import annotations
 
 import logging
-import shutil
 from pathlib import Path
-from typing import Any
 
-from file_translator.domain.dxf_models import DxfDocument, DxfEntity, DxfTextEntity
+import ezdxf
+
+from file_translator.domain.dxf_models import (
+    DxfDocument,
+    DxfTextEntity,
+    DxfDimension,
+)
+from file_translator.infrastructure.backends.ezdxf_backend import EzdxfBackend
 
 logger = logging.getLogger(__name__)
 
@@ -24,49 +27,34 @@ class DxfBuildError(Exception):
 
 
 class DxfBuilder:
-    """Builder for DXF files.
-    
-    Takes a DxfDocument with translated text and writes it back to a .dxf file.
-    Currently a stub — real implementation will perform group code substitution.
-    """
-    
+    """Writes a DxfDocument (with translations applied) to a DXF file."""
+
+    def __init__(self) -> None:
+        self._backend = EzdxfBackend()
+
     def build(self, document: DxfDocument, output_path: str | Path) -> str:
-        """Write the translated DXF document.
-        
-        Args:
-            document: DxfDocument with translated text.
-            output_path: Where to save the translated .dxf file.
-            
-        Returns:
-            Path to the saved file.
-            
-        Raises:
-            DxfBuildError: If the file cannot be written.
-        """
+        """Write the translated DXF document."""
         path = Path(output_path)
-        
-        if not document.file_path:
-            raise DxfBuildError("No source file path in document")
-        
         source_path = Path(document.file_path)
-        
-        logger.info(f"Building translated DXF: {path.name}")
-        return self._build_document(document, source_path, path)
-    
-    def _build_document(self, document: DxfDocument, source: Path, output: Path) -> str:
-        """Build the translated DXF file.
-        
-        TODO: Implement actual DXF writing:
-            1. Copy source DXF as base
-            2. For each text entity with translated_text:
-               - Find its group code 1 (text value) in the file
-               - Replace with translated text
-            3. Handle MTEXT (group codes 1, 3, 101)
-            4. Handle DIMENSION (group code 1 for user text, or compute from measurement)
-            5. Save to output path
-        """
-        # Stub: copy source file (no actual replacement yet)
-        shutil.copy2(str(source), str(output))
-        logger.warning("DXF builder stub: file copied without text replacement")
-        
-        return str(output)
+
+        if not source_path.exists():
+            raise DxfBuildError(f"Source DXF not found: {source_path}")
+
+        dxf_doc = self._backend.open(source_path)
+
+        # Apply translations via handle
+        handle_map: dict[str, str] = {}
+        for entity in document.get_all_texts():
+            if entity.translated_text and entity.handle:
+                handle_map[entity.handle] = entity.translated_text
+
+        applied = 0
+        for raw_entity, _ in self._backend.iter_entities(dxf_doc):
+            handle = self._backend.get_handle(raw_entity)
+            if handle in handle_map:
+                self._backend.set_text(raw_entity, handle_map[handle])
+                applied += 1
+
+        actual_path = self._backend.save(dxf_doc, path)
+        logger.info("DXF saved: %s (%d updates)", path.name, applied)
+        return str(actual_path)

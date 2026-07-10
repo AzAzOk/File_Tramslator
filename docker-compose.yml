@@ -33,10 +33,12 @@ services:
       - LDAP_GROUP_VIEWER=${LDAP_GROUP_VIEWER:-}
       - JWT_SECRET=${JWT_SECRET}
       - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD}
+      - ODA_CONVERTER_URL=http://oda-converter:5000
     volumes:
       - ./uploads:/app/uploads
       - ./logs:/app/logs
       - ./static:/app/static:ro
+      - shared_data:/data
     dns_search:
       - onhp.local
     extra_hosts:
@@ -103,6 +105,21 @@ services:
       - api
     restart: unless-stopped
 
+  # ODA File Converter — DWG ↔ DXF (Phase 2)
+  oda-converter:
+    build:
+      context: .
+      dockerfile: oda-converter/Dockerfile
+    container_name: file-translator-oda
+    environment:
+      - DISPLAY=:99
+      - DATA_DIR=/data
+    volumes:
+      - shared_data:/data
+    restart: unless-stopped
+
 volumes:
   mongo_data:
+    driver: local
+  shared_data:
     driver: local

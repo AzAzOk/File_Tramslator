@@ -51,6 +51,18 @@ def _heuristic_detect(text: str) -> str | None:
     cyr_count = len(_CYRILLIC.findall(stripped))
     lat_count = len(_LATIN.findall(stripped))
 
+    # For very short texts (< 5 chars), require overwhelming majority
+    if len(stripped) < 5:
+        total = cjk_count + cyr_count + lat_count
+        if total == 0:
+            return None
+        # Only return a result if all characters belong to one script
+        if cjk_count == total:
+            return "zh"
+        if cyr_count == total:
+            return "ru"
+        return None
+
     # Chinese — dominated by CJK ideographs
     if cjk_count > 0 and cjk_count >= len(stripped) * 0.3:
         return "zh"

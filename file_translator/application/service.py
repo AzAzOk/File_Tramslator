@@ -10,12 +10,13 @@ from pathlib import Path
 from typing import Any
 
 from file_translator.application.schemas import TranslationRequestSchema, TranslationResponseSchema
+from file_translator.domain.document_model import Document
 from file_translator.domain.errors import (
     DocumentOpenError,
     ModelUnavailableError,
     TranslationError,
 )
-from file_translator.domain.interfaces import DocumentTranslator, TranslationProvider
+from file_translator.domain.interfaces import DocumentTranslator, IUpdater, TranslationProvider
 from file_translator.domain.job import Job, JobStatus, ProcessingStage as JobStage
 from file_translator.domain.journal import JournalStage
 from file_translator.domain.models import (
@@ -55,7 +56,8 @@ class TranslationService:
     def _resolve_output_suffix(input_suffix: str) -> str:
         """Return output file suffix per ТЗ 9.2-9.5.
         
-        DXF/DWG -> .dwg
+        DXF -> .dxf
+        DWG -> .dwg
         PDF -> .pdf
         DOCX/DOC -> .docx
         XLSX/XLS -> .xlsx
@@ -67,6 +69,7 @@ class TranslationService:
                  glossary_service: Any = None, journal_service: Any = None,
                  job_manager: Any = None, validation_chain: Any = None):
         self._translator_factory = translator_factory or self._default_translator_factory
+        self._format_registry = None  # lazy init
         self._provider = provider
         self._glossary_service = glossary_service
         self._journal_service = journal_service
@@ -150,7 +153,23 @@ class TranslationService:
                 chain.add_validator(LanguageMismatchValidator())
                 self._validation_chain = chain
         return self._validation_chain
-    
+
+    @property
+    def format_registry(self):
+        """Get the FormatRegistry instance (lazy init)."""
+        if self._format_registry is not None:
+            return self._format_registry
+        with self._init_lock:
+            if self._format_registry is None:
+                from file_translator.infrastructure.document.format_registry import FormatRegistry
+                from file_translator.infrastructure.parsers.dxf_parser import DxfDocumentParser
+                from file_translator.infrastructure.updaters.dxf_updater import DxfUpdater
+                registry = FormatRegistry()
+                registry.register(".dxf", parser=DxfDocumentParser, updater=DxfUpdater)
+                registry.register(".dwg", parser=DxfDocumentParser, updater=DxfUpdater)
+                self._format_registry = registry
+        return self._format_registry
+
     async def translate_document(self, file_path: str, request: TranslationRequestSchema,
                                   job_id: str | None = None) -> TranslationResponseSchema:
         """Translate a document from source to target language.
@@ -448,8 +467,8 @@ class TranslationService:
             output_path = input_path.parent / f"{input_path.stem}_translated{output_suffix}"
             
             try:
-                translator.save(translated_data, output_path)
-                output_file = str(output_path)
+                saved_path = translator.save(translated_data, output_path)
+                output_file = str(saved_path)
 
                 await self.job_manager.update_progress(job_id, JobStage.SAVE)
                 
@@ -536,13 +555,18 @@ class TranslationService:
     
     def _find_translator(self, file_path: Path) -> DocumentTranslator | None:
         """Find appropriate translator for the given file."""
-        # Import all available translators
+        # Try the new FormatRegistry first (DXF, DWG, etc.)
+        registry = self.format_registry
+        if registry.can_process(file_path):
+            # For FormatRegistry-based formats, return a legacy-compatible wrapper
+            from file_translator.infrastructure.translators.dxf_translator import DxfTranslator
+            return DxfTranslator()
+
+        # Fallback to existing translators for DOCX/XLSX
         from file_translator.infrastructure.translators.docx_translator import DocxTranslator
-        from file_translator.infrastructure.translators.dxf_translator import DxfTranslator
         from file_translator.infrastructure.translators.xlsx_translator import XlsxTranslator
         
-        translators = [DocxTranslator(), DxfTranslator(), XlsxTranslator()]
-        
+        translators = [DocxTranslator(), XlsxTranslator()]
         for translator in translators:
             if translator.can_process(file_path):
                 return translator
@@ -579,6 +603,5 @@ class TranslationService:
     def _default_translator_factory(self):
         """Default translator factory."""
         from file_translator.infrastructure.translators.docx_translator import DocxTranslator
-        from file_translator.infrastructure.translators.dxf_translator import DxfTranslator
         from file_translator.infrastructure.translators.xlsx_translator import XlsxTranslator
-        return [DocxTranslator(), DxfTranslator(), XlsxTranslator()]
+        return [DocxTranslator(), XlsxTranslator()]

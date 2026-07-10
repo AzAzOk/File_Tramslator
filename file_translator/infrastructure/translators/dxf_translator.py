@@ -137,12 +137,17 @@ class DxfTranslator(DocumentTranslator):
         
         return extracted_data
     
-    def save(self, translated_data: dict[str, Any], output_path: Path) -> None:
+    def save(self, translated_data: dict[str, Any], output_path: Path) -> Path:
         """Save the translated DXF document.
-        
+
         Args:
             translated_data: translate() output with dxf_document.
             output_path: Where to write the translated .dxf.
+
+        Returns:
+            The actual path the document was saved to (may differ from
+            output_path if a fallback format was used, e.g. DWG conversion
+            failure falling back to .dxf).
         """
         doc = translated_data.get("dxf_document")
         if not doc:
@@ -150,15 +155,15 @@ class DxfTranslator(DocumentTranslator):
                 output_path=str(output_path),
                 reason="No DXF document data available",
             )
-        
+
         try:
-            self.builder.build(doc, output_path)
+            return self.builder.build(doc, output_path)
         except Exception as e:
             raise SaveDocumentError(
                 output_path=str(output_path),
                 reason=str(e),
             )
-    
+        
     def _build_text_units(self, doc: DxfDocument) -> list[TextUnit]:
         """Convert DXF entities into TextUnit list for translation pipeline."""
         text_units = []
@@ -168,7 +173,7 @@ class DxfTranslator(DocumentTranslator):
                 id=entity.id,
                 original_text=entity.original_text,
                 context=f"dxf_layer:{entity.layer}",
-                position={
+                metadata={
                     "x": entity.position.x,
                     "y": entity.position.y,
                     "z": entity.position.z,
@@ -182,7 +187,7 @@ class DxfTranslator(DocumentTranslator):
                 id=dim.id,
                 original_text=dim.original_text,
                 context=f"dxf_dimension:{dim.measurement}",
-                position={
+                metadata={
                     "x": dim.text_position.x,
                     "y": dim.text_position.y,
                     "entity_type": "DIMENSION",

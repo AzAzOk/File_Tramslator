@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -107,28 +108,30 @@ class OkapiService:
     def __init__(self, tikal_home: str | None = None):
         self._tikal_home: str | None = tikal_home
         self._tikal_cmd: list[str] | None = None
+        self._tikal_lock = threading.Lock()
 
     @property
     def tikal_cmd(self) -> list[str]:
         if self._tikal_cmd is not None:
             return self._tikal_cmd
 
-        tikal_home = self._tikal_home
-        if not tikal_home:
-            tikal_home = self._resolve_tikal_home()
+        with self._tikal_lock:
+            if self._tikal_cmd is not None:
+                return self._tikal_cmd
+            tikal_home = self._tikal_home
+            if not tikal_home:
+                tikal_home = self._resolve_tikal_home()
 
-        if tikal_home:
-            # Tikal distribution layout: <home>/tikal.sh or tikal.bat
-            if platform.system() == "Windows":
-                cmd = [str(Path(tikal_home) / "tikal.bat")]
+            if tikal_home:
+                if platform.system() == "Windows":
+                    cmd = [str(Path(tikal_home) / "tikal.bat")]
+                else:
+                    cmd = [str(Path(tikal_home) / "tikal.sh")]
+                self._tikal_cmd = cmd
             else:
-                cmd = [str(Path(tikal_home) / "tikal.sh")]
-            self._tikal_cmd = cmd
-        else:
-            # Fallback: try PATH
-            self._tikal_cmd = ["tikal"]
+                self._tikal_cmd = ["tikal"]
 
-        return self._tikal_cmd
+            return self._tikal_cmd
 
     def _resolve_tikal_home(self) -> str | None:
         """Resolve TIKAL_HOME from environment variables."""

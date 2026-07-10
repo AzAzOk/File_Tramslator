@@ -1,11 +1,12 @@
-"""Domain interfaces - Abstract contracts for translators."""
+"""Domain interfaces - Abstract contracts for translators and pipeline components."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
+from file_translator.domain.document_model import Document
 from file_translator.domain.models import DocumentFormat
 
 
@@ -312,4 +313,97 @@ class UserRepository(ABC):
     @abstractmethod
     async def list_all(self) -> list[Any]:
         """List all users."""
+        ...
+
+
+class IParser(ABC):
+    """Format-agnostic parser interface.
+
+    Every supported document format provides an implementation that
+    produces a ``Document`` — the universal intermediate representation.
+    """
+
+    @abstractmethod
+    def parse(self, path: Path) -> Document:
+        """Read the file at *path* and return a Document."""
+        ...
+
+    @abstractmethod
+    def capabilities(self) -> set[str]:
+        """Declare what this parser supports (e.g. 'tables', 'blocks')."""
+        ...
+
+
+class IUpdater(ABC):
+    """Format-agnostic updater interface.
+
+    Applies translations to a Document and saves the result back to the
+    native file format.
+    """
+
+    @abstractmethod
+    def apply(self, document: Document, translations: dict[str, str]) -> None:
+        """Write translated text into *document* entities.
+
+        ``translations`` maps ``entity.id`` → ``translated_text``.
+        """
+        ...
+
+    @abstractmethod
+    def save(self, document: Document, output_path: Path) -> None:
+        """Persist *document* (with applied translations) to *output_path*."""
+        ...
+
+
+class CADBackend(ABC):
+    """Low-level CAD backend — abstracts ezdxf vs ODA SDK vs conversion.
+
+    This is *not* a format-agnostic interface: it exposes DXF/DWG-specific
+    concepts (handles, layers, blocks).  ``DxfParser`` / ``DxfUpdater``
+    wrap it and present the generic ``IParser`` / ``IUpdater`` contract.
+    """
+
+    @abstractmethod
+    def open(self, path: Path) -> Any:
+        """Open a CAD file and return a backend-specific document handle."""
+        ...
+
+    @abstractmethod
+    def iter_entities(self, doc: Any) -> Iterator[Any]:
+        """Yield every text-bearing entity in *doc*."""
+        ...
+
+    @abstractmethod
+    def get_text(self, entity: Any) -> str:
+        """Return the raw text stored in *entity*."""
+        ...
+
+    @abstractmethod
+    def set_text(self, entity: Any, text: str) -> None:
+        """Replace the text in *entity* with *text*."""
+        ...
+
+    @abstractmethod
+    def get_handle(self, entity: Any) -> str:
+        """Return the native handle of *entity*."""
+        ...
+
+    @abstractmethod
+    def get_layer(self, entity: Any) -> str:
+        """Return the layer name of *entity*."""
+        ...
+
+    @abstractmethod
+    def get_entity_count(self, doc: Any) -> int:
+        """Return the total number of text-bearing entities in *doc*."""
+        ...
+
+    @abstractmethod
+    def save(self, doc: Any, path: Path) -> None:
+        """Write *doc* (native handle) to *path*."""
+        ...
+
+    @abstractmethod
+    def close(self, doc: Any) -> None:
+        """Release resources held by *doc*."""
         ...
