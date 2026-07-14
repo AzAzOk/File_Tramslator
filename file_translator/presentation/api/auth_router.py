@@ -11,6 +11,11 @@ from pydantic import BaseModel
 
 from file_translator.application.auth_service import AuthService
 from file_translator.domain.auth import AuthCredentials, RoleType
+from file_translator.infrastructure.auth.rate_limiter import (
+    login_rate_limiter,
+    refresh_rate_limiter,
+    get_client_ip,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +64,18 @@ def get_auth_service(request: Request) -> AuthService:
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(body: LoginRequest,
+async def login(request: Request, body: LoginRequest,
                 auth_service: AuthService = Depends(get_auth_service)):
+    # Rate limiting
+    client_ip = get_client_ip(request)
+    if not login_rate_limiter.is_allowed(client_ip):
+        retry_after = login_rate_limiter.get_retry_after(client_ip)
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts",
+            headers={"Retry-After": str(int(retry_after))} if retry_after else None,
+        )
+    
     result = await auth_service.login(body.username, body.password)
     if not result:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -90,8 +105,18 @@ async def login(body: LoginRequest,
 
 
 @router.post("/refresh", response_model=RefreshResponse)
-async def refresh(body: RefreshRequest,
+async def refresh(request: Request, body: RefreshRequest,
                   auth_service: AuthService = Depends(get_auth_service)):
+    # Rate limiting
+    client_ip = get_client_ip(request)
+    if not refresh_rate_limiter.is_allowed(client_ip):
+        retry_after = refresh_rate_limiter.get_retry_after(client_ip)
+        raise HTTPException(
+            status_code=429,
+            detail="Too many refresh attempts",
+            headers={"Retry-After": str(int(retry_after))} if retry_after else None,
+        )
+    
     payload = auth_service.auth_provider.decode_token(body.refresh_token)
     if not payload or payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid refresh token")
@@ -141,7 +166,7 @@ async def logout(request: Request):
             if payload and payload.get("jti"):
                 exp = payload.get("exp", 0)
                 if exp:
-                    jwt_provider.blacklist_token(payload["jti"], float(exp))
+                    await jwt_provider.blacklist_token(payload["jti"], float(exp))
         # Also delete any stored session data
         await request.app.state.auth_service.session_repo.delete_session(
             auth.token.token

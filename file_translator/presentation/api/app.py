@@ -27,6 +27,7 @@ from file_translator.infrastructure.repositories.auth_repository import (
     MongoSessionRepository,
     MongoUserRepository,
 )
+from file_translator.infrastructure.repositories.redis_auth_repository import RedisTokenBlacklist
 
 from file_translator.application.schemas import (
     BatchJobCreateResponseSchema,
@@ -300,7 +301,10 @@ async def _startup() -> None:
         await mongo_provider.connect(MONGO_URI, MONGO_DB_NAME)
         user_repo = MongoUserRepository(mongo_provider.db)
         session_repo = MongoSessionRepository(mongo_provider.db)
-        jwt_provider = JwtAuthProvider(JWT_SECRET, user_repo)
+        
+        # Initialize Redis-backed token blacklist
+        token_blacklist = RedisTokenBlacklist()
+        jwt_provider = JwtAuthProvider(JWT_SECRET, user_repo, token_blacklist)
 
         app.state.auth_service = AuthService(
             auth_provider=jwt_provider,

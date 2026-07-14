@@ -565,12 +565,49 @@ const loginUsername = document.getElementById('loginUsername');
 const loginPassword = document.getElementById('loginPassword');
 const loginError = document.getElementById('loginError');
 
-function authFetch(url, options = {}) {
-  const headers = options.headers || {};
-  if (authToken) {
-    headers['Authorization'] = 'Bearer ' + authToken;
+// ── Auto-refresh interceptor ──
+// When a request gets 401, automatically refreshes the token and retries.
+// Concurrent 401s share a single refresh attempt (refreshLock).
+let _refreshPromise = null; // pending refresh, if any
+
+async function authFetch(url, options = {}) {
+  const doFetch = (token) => {
+    const headers = { ...(options.headers || {}) };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    return fetch(url, { cache: 'no-store', ...options, headers });
+  };
+
+  let resp = await doFetch(authToken);
+  if (resp.status !== 401 || !refreshToken) return resp;
+
+  // ── 401 received → try refresh (with lock for concurrent calls) ──
+  if (!_refreshPromise) {
+    _refreshPromise = (async () => {
+      try {
+        const r = await fetch('/api/auth/refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+        if (!r.ok) return false;
+        const data = await r.json();
+        authToken = data.access_token;
+        refreshToken = data.refresh_token;
+        localStorage.setItem('auth_token', authToken);
+        localStorage.setItem('refresh_token', refreshToken);
+        return true;
+      } catch { return false; }
+    })();
   }
-  return fetch(url, { cache: 'no-store', ...options, headers });
+  const ok = await _refreshPromise;
+  _refreshPromise = null;
+
+  if (ok) {
+    resp = await doFetch(authToken); // retry with new token
+  } else {
+    clearAuthState();
+  }
+  return resp;
 }
 
 async function updateAuthUI() {

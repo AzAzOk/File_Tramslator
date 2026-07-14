@@ -1,4 +1,4 @@
-"""JWT-based authentication provider with token blacklist support."""
+"""JWT-based authentication provider with Redis-backed token blacklist."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 
 from jose import JWTError, jwt
 import bcrypt as _bcrypt
@@ -22,10 +22,12 @@ class JwtAuthProvider(AuthProvider):
     REFRESH_EXPIRE_DAYS = 7
     ALGORITHM = "HS256"
 
-    def __init__(self, secret_key: str, user_repository: UserRepository):
+    def __init__(self, secret_key: str, user_repository: UserRepository, 
+                 token_blacklist: Optional[Any] = None):
         self._secret_key = secret_key
         self._user_repo = user_repository
-        self._blacklisted_jtis: dict[str, float] = {}  # jti -> expiry timestamp
+        self._token_blacklist = token_blacklist  # Redis-backed blacklist (optional)
+        self._blacklisted_jtis: dict[str, float] = {}  # Fallback in-memory blacklist
 
     def create_access_token(self, user_id: str, username: str,
                             role: str) -> str:
@@ -59,26 +61,24 @@ class JwtAuthProvider(AuthProvider):
             logger.warning(f"Token decode failed: {e}")
             return None
 
-    def blacklist_token(self, jti: str, expires_at: float) -> None:
+    async def blacklist_token(self, jti: str, expires_at: float) -> None:
         """Add a token's JTI to the blacklist until its expiry."""
-        self._cleanup_blacklist()
-        if jti not in self._blacklisted_jtis:
+        if self._token_blacklist:
+            # Use Redis-backed blacklist
+            await self._token_blacklist.blacklist(jti, expires_at)
+        else:
+            # Fallback to in-memory (for backwards compatibility)
             self._blacklisted_jtis[jti] = expires_at
-            logger.debug(f"Token {jti[:8]}... blacklisted until {datetime.fromtimestamp(expires_at)}")
+            logger.debug(f"Token {jti[:8]}... blacklisted in-memory until {datetime.fromtimestamp(expires_at)}")
 
-    def _is_blacklisted(self, jti: str) -> bool:
+    async def _is_blacklisted(self, jti: str) -> bool:
         """Check if a JTI is blacklisted."""
-        self._cleanup_blacklist()
-        return jti in self._blacklisted_jtis
-
-    def _cleanup_blacklist(self) -> None:
-        """Remove expired entries from the in-memory blacklist."""
-        now = time.time()
-        expired = [jti for jti, exp in self._blacklisted_jtis.items() if exp <= now]
-        for jti in expired:
-            del self._blacklisted_jtis[jti]
-        if expired:
-            logger.debug(f"Cleaned {len(expired)} expired entries from token blacklist")
+        if self._token_blacklist:
+            # Use Redis-backed blacklist
+            return await self._token_blacklist.is_blacklisted(jti)
+        else:
+            # Fallback to in-memory
+            return jti in self._blacklisted_jtis
 
     async def authenticate(self, token: str, method: str = "bearer") -> AuthCredentials | None:
         payload = self.decode_token(token)
@@ -87,7 +87,7 @@ class JwtAuthProvider(AuthProvider):
 
         # Check blacklist
         jti = payload.get("jti")
-        if jti and self._is_blacklisted(jti):
+        if jti and await self._is_blacklisted(jti):
             logger.warning(f"Token {jti[:8]}... is blacklisted")
             return None
 
@@ -99,6 +99,8 @@ class JwtAuthProvider(AuthProvider):
         if not user or not user.is_active:
             return None
 
+        iat = payload.get("iat")
+        exp = payload.get("exp")
         return AuthCredentials(
             user=user,
             token=AuthToken(
@@ -107,10 +109,8 @@ class JwtAuthProvider(AuthProvider):
                 user_id=user_id,
                 username=payload.get("username", ""),
                 role=payload.get("role", ""),
-                issued_at=datetime.fromtimestamp(payload.get("iat")).isoformat()
-                if payload.get("iat") else "",
-                expires_at=datetime.fromtimestamp(payload.get("exp")).isoformat()
-                if payload.get("exp") else "",
+                issued_at=datetime.fromtimestamp(iat).isoformat() if iat else "",
+                expires_at=datetime.fromtimestamp(exp).isoformat() if exp else "",
             ),
         )
 

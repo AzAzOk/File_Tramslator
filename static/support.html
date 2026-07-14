@@ -202,10 +202,47 @@
 let authToken = localStorage.getItem('auth_token');
 let refreshToken = localStorage.getItem('refresh_token');
 
-function authFetch(url, options = {}) {
-  const headers = options.headers || {};
-  if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
-  return fetch(url, { cache: 'no-store', ...options, headers });
+// ── Auto-refresh interceptor ──
+let _refreshPromise = null;
+
+async function authFetch(url, options = {}) {
+  const doFetch = (token) => {
+    const headers = { ...(options.headers || {}) };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    return fetch(url, { cache: 'no-store', ...options, headers });
+  };
+
+  let resp = await doFetch(authToken);
+  if (resp.status !== 401 || !refreshToken) return resp;
+
+  if (!_refreshPromise) {
+    _refreshPromise = (async () => {
+      try {
+        const r = await fetch('/api/auth/refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+        if (!r.ok) return false;
+        const data = await r.json();
+        authToken = data.access_token;
+        refreshToken = data.refresh_token;
+        localStorage.setItem('auth_token', authToken);
+        localStorage.setItem('refresh_token', refreshToken);
+        return true;
+      } catch { return false; }
+    })();
+  }
+  const ok = await _refreshPromise;
+  _refreshPromise = null;
+
+  if (ok) {
+    resp = await doFetch(authToken);
+  } else {
+    // Redirect to main page login
+    window.location.href = '/';
+  }
+  return resp;
 }
 
 async function tryRefresh() {
