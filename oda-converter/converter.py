@@ -7,6 +7,7 @@ Works both locally (Windows) and via the ODA converter service (Linux/Docker).
 from __future__ import annotations
 
 import logging
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -78,7 +79,11 @@ def convert(
 
     input_dir = input_path.parent.resolve()
     output_dir = output_path.parent.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
     input_name = input_path.name
+
+    if output_path.is_dir():
+        shutil.rmtree(output_path)
 
     cmd = [
         converter,
@@ -91,6 +96,14 @@ def convert(
         input_name,
     ]
 
+    # On Linux, wrap with xvfb-run to provide a virtual display for Qt/ODAFileConverter.
+    # The ODA .deb bundles Qt6 with only the xcb plugin (no offscreen), so a real
+    # X server (even virtual) is required.  Using xvfb-run per-call is more reliable
+    # than a long-lived background Xvfb process.
+    if sys.platform != "win32":
+        if shutil.which("xvfb-run"):
+            cmd = ["xvfb-run", "-a", "-s", "-ac -screen 0 1280x1024x24"] + cmd
+
     logger.info(
         "ODA convert: %s -> %s (%s)", input_path.name, output_path.name, output_format
     )
@@ -102,7 +115,7 @@ def convert(
         produced_ext = ".dxf" if output_format == "DXF" else ".dwg"
         produced_path = output_dir / f"{input_path.stem}{produced_ext}"
 
-        if result.returncode == 0 and produced_path.exists():
+        if result.returncode == 0 and produced_path.is_file():
             if produced_path != output_path:
                 produced_path.rename(output_path)
             logger.info("ODA conversion successful: %s", output_path.name)

@@ -91,6 +91,9 @@ def _convert_via_http(
 
     try:
         _SHARED_DATA.mkdir(parents=True, exist_ok=True)
+        for p in (input_data, output_data):
+            if p.is_dir():
+                shutil.rmtree(p, ignore_errors=True)
         shutil.copy2(input_path, input_data)
 
         body = json.dumps({
@@ -126,8 +129,11 @@ def _convert_via_http(
         logger.error("ODA HTTP exception: %s", e)
         return False
     finally:
-        input_data.unlink(missing_ok=True)
-        output_data.unlink(missing_ok=True)
+        for p in (input_data, output_data):
+            if p.is_dir():
+                shutil.rmtree(p, ignore_errors=True)
+            else:
+                p.unlink(missing_ok=True)
 
 
 def _run_converter(
