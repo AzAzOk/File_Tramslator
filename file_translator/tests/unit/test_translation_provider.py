@@ -72,3 +72,28 @@ class TestOpenAITranslationProvider:
             
             with pytest.raises(TranslationError):
                 await provider.translate_batch(batch_data)
+
+    @pytest.mark.asyncio
+    async def test_translate_batch_split_depth_exceeded(self):
+        """Test that exceeding split depth raises TranslationError."""
+        from file_translator.domain.errors import TranslationError
+        from file_translator.infrastructure.config import MAX_SPLIT_DEPTH
+
+        provider = _make_provider()
+
+        text_unit = TextUnit(id="test-1", original_text="Hello")
+        batch = TranslationBatch(
+            sequence_id=1,
+            text_units=[text_unit],
+            source_language=LanguageCode.EN,
+            target_language=LanguageCode.RU,
+        )
+
+        batch_data = {
+            "batch": batch,
+            "source_language": LanguageCode.EN,
+            "target_language": LanguageCode.RU,
+        }
+
+        with pytest.raises(TranslationError, match="глубины разделения"):
+            await provider.translate_batch(batch_data, _split_depth=MAX_SPLIT_DEPTH + 1)

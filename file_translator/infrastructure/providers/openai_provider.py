@@ -124,8 +124,13 @@ class OpenAITranslationProvider(TranslationProvider):
             TranslationError: If translation fails or response is invalid.
         """
         if _split_depth > MAX_SPLIT_DEPTH:
-            logger.error(f"Split depth limit exceeded for batch, returning partial results")
-            return []
+            batch_id = batch_data.get('batch', None)
+            seq = batch_id.sequence_id if batch_id else "?"
+            logger.error(f"Split depth limit exceeded for batch after {MAX_SPLIT_DEPTH} retries")
+            raise TranslationError(
+                batch_id=str(seq),
+                reason=f"Превышен лимит глубины разделения ({MAX_SPLIT_DEPTH}) — ответ модели не укладывается в лимиты",
+            )
         
         batch: TranslationBatch = batch_data['batch']
         source_lang: LanguageCode = batch_data['source_language']
