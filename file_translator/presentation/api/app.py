@@ -181,6 +181,10 @@ async def _run_translation_job(job_id: str, file_path: str, request: Translation
             return
             
         logger.info(f"Background job {job_id} started: {file_path}")
+        if not Path(file_path).exists():
+            logger.warning(f"Job {job_id} file missing (temp dir cleaned by cancel?): {file_path}")
+            await translation_service.job_manager.fail_job(job_id, "Файл не найден — задача была отменена до начала обработки")
+            return
         result = await translation_service.translate_document(
             file_path, request, job_id=job_id,
         )
@@ -205,11 +209,13 @@ async def _run_translation_job(job_id: str, file_path: str, request: Translation
 
 
 def _cleanup_temp_dir(temp_dir: str, job_id: str) -> None:
-    """Clean up temp directory with proper error logging (no silent ignores)."""
+    """Clean up temp directory, ignoring if already removed (cancel race)."""
     try:
         shutil.rmtree(temp_dir)
+    except FileNotFoundError:
+        logger.debug(f"Temp dir already removed for job {job_id}: {temp_dir}")
     except Exception as cleanup_error:
-        logger.critical(f"Failed to cleanup temp_dir {temp_dir} for job {job_id}: {cleanup_error}")
+        logger.warning(f"Failed to cleanup temp_dir {temp_dir} for job {job_id}: {cleanup_error}")
 
 
 # Per-user job queue for sequential processing
@@ -1329,16 +1335,20 @@ async def cancel_job(
     if not job:
         raise HTTPException(status_code=404, detail=f"Задача не найдена: {job_id}")
     _check_job_owner(job, request.state.auth)
+    was_running = job.status == JobStatus.RUNNING
     job = await translation_service.job_manager.cancel_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Задача не найдена: {job_id}")
     # Clean up queue tracking if job was still pending
     await user_job_queue.cancel_pending(job_id)
-    # Clean up temp dir immediately for never-started jobs
-    temp_dir = job.metadata.get("temp_dir", "")
-    if temp_dir and Path(temp_dir).exists():
-        _cleanup_temp_dir(temp_dir, job_id)
-        logger.info(f"Cleaned up temp dir for cancelled job {job_id}: {temp_dir}")
+    # Only delete temp dir for jobs that never started processing.
+    # Running jobs detect cancellation at the next safe checkpoint and clean up
+    # themselves — deleting the temp dir here creates a race with extract().
+    if not was_running:
+        temp_dir = job.metadata.get("temp_dir", "")
+        if temp_dir and Path(temp_dir).exists():
+            _cleanup_temp_dir(temp_dir, job_id)
+            logger.info(f"Cleaned up temp dir for cancelled job {job_id}: {temp_dir}")
     return _job_to_schema(job)
 
 
