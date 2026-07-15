@@ -108,6 +108,7 @@ class DocxTranslator(DocumentTranslator):
                 )
                 converted = LibreOfficeConverter.convert(file_path, self._temp_dir)
                 actual_path = converted
+                self._document_path = actual_path
                 logger.info(f"Converted .doc to .docx: {converted}")
 
             # Run Tikal extraction
@@ -194,7 +195,7 @@ class DocxTranslator(DocumentTranslator):
         extracted_data["translations_applied"] = len(translations)
         return extracted_data
 
-    def save(self, translated_data: dict, output_path: Path) -> None:
+    def save(self, translated_data: dict, output_path: Path) -> Path:
         """Save translated document by merging XLIFF back to DOCX.
 
         Calls tikal -m to merge the translated XLIFF (with updated <target>
@@ -204,6 +205,9 @@ class DocxTranslator(DocumentTranslator):
         Args:
             translated_data: Data from translate() containing xliff_path.
             output_path: Destination path for the translated DOCX.
+
+        Returns:
+            Path to the saved output file.
 
         Raises:
             SaveDocumentError: If merge or file copy fails.
@@ -220,6 +224,7 @@ class DocxTranslator(DocumentTranslator):
             )
             self._post_process_docx(output_path)
             logger.info(f"Document saved: {output_path}")
+            return output_path
         except TikalNotAvailableError as e:
             raise SaveDocumentError(
                 output_path=str(output_path),

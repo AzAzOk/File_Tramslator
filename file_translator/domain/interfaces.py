@@ -58,8 +58,8 @@ class DocumentTranslator(ABC):
         ...
     
     @abstractmethod
-    def save(self, translated_data: dict, output_path: Path) -> None:
-        """Save translated document to file system."""
+    def save(self, translated_data: dict, output_path: Path) -> Path:
+        """Save translated document to file system. Returns the saved output path."""
         ...
 
 
