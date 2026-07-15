@@ -22,6 +22,7 @@ from file_translator.domain.auth import AuthCredentials
 
 from file_translator.infrastructure.auth.jwt_auth_provider import JwtAuthProvider
 from file_translator.infrastructure.auth.ldap_service import LdapService
+from file_translator.infrastructure.config import MAX_UPLOAD_SIZE_BYTES, JOB_TTL_SECONDS, CLEANUP_INTERVAL_SECONDS
 from file_translator.infrastructure.providers.mongo_provider import MongoProvider
 from file_translator.infrastructure.repositories.auth_repository import (
     MongoSessionRepository,
@@ -91,7 +92,7 @@ if not JWT_SECRET:
     raise RuntimeError("JWT_SECRET environment variable is required. Set it in .env file.")
 
 DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD", "")
-MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", str(128 * 1024 * 1024)))  # 128 MB
+MAX_UPLOAD_SIZE = MAX_UPLOAD_SIZE_BYTES
 
 _HELP_URL = os.getenv("HELP_URL", "")
 
@@ -135,7 +136,7 @@ def _safe_filename(filename: str) -> str:
     if stem in ("CON", "PRN", "AUX", "NUL", "CLOCK$") or re.match(
         r"^(COM|LPT)\d+$", stem
     ):
-        raise ValueError(f"Filename '{filename}' uses a reserved system name")
+        raise ValueError(f"Имя файла '{filename}' зарезервировано системой")
 
     return clean
 
@@ -148,7 +149,7 @@ async def _check_file_size(file: UploadFile) -> None:
     if size > MAX_UPLOAD_SIZE:
         raise HTTPException(
             status_code=413,
-            detail=f"File exceeds maximum size of {MAX_UPLOAD_SIZE // (1024*1024)} MB",
+            detail=f"Размер файла превышает максимально допустимый ({MAX_UPLOAD_SIZE // (1024*1024)} МБ)",
         )
 
 
@@ -217,7 +218,7 @@ user_job_queue = UserJobQueue(process_func=_run_translation_job)
 
 # --- Periodic cleanup: temp dirs (1h TTL) + expired tokens ---
 
-async def _cleanup_orphaned_temp_dirs(interval: int = 1800) -> None:
+async def _cleanup_orphaned_temp_dirs(interval: int = CLEANUP_INTERVAL_SECONDS) -> None:
     """Background task that deletes ALL translator_* temp dirs older than 1 hour
     and removes stale terminal jobs from Redis.
 
@@ -230,7 +231,7 @@ async def _cleanup_orphaned_temp_dirs(interval: int = 1800) -> None:
             await asyncio.sleep(interval)
             from datetime import datetime, timezone, timedelta
             now = datetime.now(timezone.utc)
-            cutoff_ts = now.timestamp() - 3600  # 1 hour ago
+            cutoff_ts = now.timestamp() - JOB_TTL_SECONDS  # configurable TTL
 
             # ── Filesystem scan: delete ALL translator_*/docx_okapi_*/tikal_*
             #    dirs older than 1 hour. Covers every temp dir the system creates. ──
@@ -258,7 +259,7 @@ async def _cleanup_orphaned_temp_dirs(interval: int = 1800) -> None:
                     if created:
                         try:
                             created_dt = datetime.fromisoformat(created)
-                            if (now - created_dt).total_seconds() > 3600:
+                            if (now - created_dt).total_seconds() > JOB_TTL_SECONDS:
                                 await translation_service.job_manager.delete_job(job.job_id)
                                 cleaned_jobs += 1
                         except (ValueError, TypeError):
@@ -400,18 +401,18 @@ async def create_translation_job(
     if not 10 <= batch_size <= 200:
         raise HTTPException(
             status_code=400,
-            detail=f"batch_size must be between 10 and 200, got {batch_size}",
+            detail=f"Размер пакета должен быть от 10 до 200, получен: {batch_size}",
         )
     if not file.filename:
         raise HTTPException(
             status_code=400,
-            detail="Filename is required"
+            detail="Имя файла обязательно"
         )
     ext = Path(file.filename).suffix.lower()
     if ext not in ('.docx', '.doc', '.xlsx', '.xls', '.dxf', '.dwg'):
         raise HTTPException(
             status_code=400,
-            detail="Only DOCX, DOC, XLSX, XLS, DXF and DWG files are currently supported"
+            detail="Поддерживаются только файлы DOCX, DOC, XLSX, XLS, DXF и DWG"
         )
 
     await _check_file_size(file)
@@ -475,14 +476,14 @@ async def create_batch_translation_jobs(
     if not 10 <= batch_size <= 200:
         raise HTTPException(
             status_code=400,
-            detail=f"batch_size must be between 10 and 200, got {batch_size}",
+            detail=f"Размер пакета должен быть от 10 до 200, получен: {batch_size}",
         )
 
     MAX_BATCH_FILES = 50
     if len(files) > MAX_BATCH_FILES:
         raise HTTPException(
             status_code=400,
-            detail=f"Maximum {MAX_BATCH_FILES} files per batch request",
+            detail=f"Максимум {MAX_BATCH_FILES} файлов за один запрос",
         )
 
     user_id = request.state.auth.user.user_id
@@ -536,7 +537,7 @@ async def create_batch_translation_jobs(
         ))
 
     if not jobs:
-        raise HTTPException(status_code=400, detail="No supported files provided")
+        raise HTTPException(status_code=400, detail="Не найдено подходящих файлов")
 
     return BatchJobCreateResponseSchema(jobs=jobs, total=len(jobs))
 
@@ -588,7 +589,7 @@ async def list_users(
     """List all registered users (admin only)."""
     svc = getattr(app.state, "auth_service", None)
     if not svc:
-        raise HTTPException(status_code=500, detail="Auth service not available")
+        raise HTTPException(status_code=500, detail="Сервис аутентификации недоступен")
     users = await svc.list_users()
     return [
         UserSchema(
@@ -614,7 +615,7 @@ async def create_user(
     """Create a new user (admin only)."""
     svc = getattr(app.state, "auth_service", None)
     if not svc:
-        raise HTTPException(status_code=500, detail="Auth service not available")
+        raise HTTPException(status_code=500, detail="Сервис аутентификации недоступен")
 
     valid_roles = {"admin": RoleType.ADMIN, "operator": RoleType.OPERATOR,
                    "viewer": RoleType.VIEWER, "api": RoleType.API}
@@ -622,7 +623,7 @@ async def create_user(
     if not role:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid role '{user_data.role}'. Must be one of: {', '.join(valid_roles)}",
+            detail=f"Неверная роль '{user_data.role}'. Допустимые значения: {', '.join(valid_roles)}",
         )
 
     user = await svc.create_user(
@@ -674,20 +675,20 @@ async def translate_document(
     if not 10 <= batch_size <= 200:
         raise HTTPException(
             status_code=400,
-            detail=f"batch_size must be between 10 and 200, got {batch_size}",
+            detail=f"Размер пакета должен быть от 10 до 200, получен: {batch_size}",
         )
     # Validate file extension
     if not file.filename:
         raise HTTPException(
             status_code=400,
-            detail="Filename is required"
+            detail="Имя файла обязательно"
         )
     allowed_extensions = ('.docx', '.doc', '.xlsx', '.xls')
     ext = Path(file.filename).suffix.lower()
     if ext not in allowed_extensions:
         raise HTTPException(
             status_code=400,
-            detail=f"Only {', '.join(allowed_extensions)} files are supported"
+            detail=f"Поддерживаются только файлы: {', '.join(allowed_extensions)}"
         )
     
     logger.info(f"Received translation request: {file.filename}")
@@ -724,7 +725,7 @@ async def translate_document(
         if not result.success:
             raise HTTPException(
                 status_code=500,
-                detail=result.errors[0] if result.errors else "Translation failed"
+                detail=result.errors[0] if result.errors else "Ошибка перевода"
             )
         
         # Generate cleanup ID for temp dir tracking
@@ -737,7 +738,7 @@ async def translate_document(
         output_path = Path(result.output_file_path)
         
         if not output_path.exists():
-            raise HTTPException(status_code=500, detail="Translated file not found")
+            raise HTTPException(status_code=500, detail="Переведённый файл не найден")
         
         # Return file for download with metadata in headers
         background_tasks = BackgroundTasks()
@@ -772,7 +773,7 @@ async def supported_formats():
     return {
         "formats": ["docx", "doc", "xlsx", "xls"],
         "dxf_stub": True,
-        "dxf_note": "Architecture in place, translation logic pending implementation",
+        "dxf_note": "Архитектура готова, логика перевода ещё не реализована",
         "coming_soon": ["pdf", "dwg"],
     }
 
@@ -792,14 +793,14 @@ async def validate_document(
     if not file.filename:
         return ValidationReportSchema(
             passed=False,
-            errors=[{"code": "NO_FILENAME", "message": "Filename is required",
+            errors=[{"code": "NO_FILENAME", "message": "Имя файла обязательно",
                      "severity": "error"}],
         )
     ext = Path(file.filename).suffix.lower()
     if ext not in ('.docx', '.doc', '.xlsx', '.xls'):
         return ValidationReportSchema(
             passed=False,
-            errors=[{"code": "UNSUPPORTED_FORMAT", "message": "Only DOCX, DOC, XLSX, and XLS files are currently supported",
+            errors=[{"code": "UNSUPPORTED_FORMAT", "message": "Поддерживаются только файлы DOCX, DOC, XLSX и XLS",
                      "severity": "error"}],
         )
     
@@ -876,7 +877,7 @@ async def list_glossary_entries(
     if collection_id:
         allowed = svc._access_resolver.is_collection_allowed(collection_id, ldap_groups)
         if not allowed:
-            raise HTTPException(status_code=403, detail=f"Collection '{collection_id}' not accessible")
+            raise HTTPException(status_code=403, detail=f"Нет доступа к коллекции '{collection_id}'")
         entries = await svc.get_all_entries(collection_id=collection_id)
     else:
         entries = await svc.get_all_entries()
@@ -919,7 +920,7 @@ async def create_glossary_entry(
         collection_id, ldap_groups,
     )
     if not allowed:
-        raise HTTPException(status_code=403, detail=f"Collection '{collection_id}' not accessible")
+        raise HTTPException(status_code=403, detail=f"Нет доступа к коллекции '{collection_id}'")
 
     username = getattr(auth.user, "username", "")
     try:
@@ -956,7 +957,7 @@ async def export_glossary(
     # Check collection access permissions
     ldap_groups = getattr(auth.user, "ldap_groups", None) if hasattr(auth, 'user') else None
     if ldap_groups and not svc._access_resolver.is_collection_allowed(collection_id, ldap_groups):
-        raise HTTPException(status_code=403, detail=f"Access denied to collection: {collection_id}")
+        raise HTTPException(status_code=403, detail=f"Доступ к коллекции запрещён: {collection_id}")
 
     entries = await svc.get_all_entries(collection_id)
 
@@ -1016,7 +1017,7 @@ async def import_glossary(
     if collection_id and collection_id != "default":
         collections = await svc.collection_repository.find_all()
         if not any(c.id == collection_id for c in collections):
-            raise HTTPException(status_code=404, detail=f"Collection not found: {collection_id}")
+            raise HTTPException(status_code=404, detail=f"Коллекция не найдена: {collection_id}")
 
     content = await file.read()
 
@@ -1026,7 +1027,7 @@ async def import_glossary(
     try:
         decoded = content.decode("utf-8-sig")
     except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="File must be UTF-8 encoded CSV")
+        raise HTTPException(status_code=400, detail="Файл должен быть в кодировке UTF-8")
 
     decoded = decoded.lstrip("\ufeff")
 
@@ -1035,7 +1036,7 @@ async def import_glossary(
     if not reader.fieldnames or not required.issubset(reader.fieldnames):
         raise HTTPException(
             status_code=400,
-            detail=f"CSV must contain columns: {', '.join(sorted(required))}. Found: {reader.fieldnames}",
+            detail=f"CSV должен содержать колонки: {', '.join(sorted(required))}. Найдено: {reader.fieldnames}",
         )
 
     svc = await translation_service.get_glossary_service()
@@ -1114,7 +1115,7 @@ async def get_glossary_entry(
     svc = await translation_service.get_glossary_service()
     result = await svc.repository.find_by_id(entry_id)
     if not result:
-        raise HTTPException(status_code=404, detail=f"Glossary entry not found: {entry_id}")
+        raise HTTPException(status_code=404, detail=f"Запись глоссария не найдена: {entry_id}")
     return GlossaryEntrySchema(
         id=result.id,
         ru_word=result.ru_word,
@@ -1142,7 +1143,7 @@ async def update_glossary_entry(
     svc = await translation_service.get_glossary_service()
     existing = await svc.repository.find_by_id(entry_id, table_name=svc._table_for(collection_id))
     if not existing:
-        raise HTTPException(status_code=404, detail=f"Glossary entry not found: {entry_id}")
+        raise HTTPException(status_code=404, detail=f"Запись глоссария не найдена: {entry_id}")
 
     entry_data = GlossaryEntry(
         id=int(entry_id),
@@ -1159,7 +1160,7 @@ async def update_glossary_entry(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if not result:
-        raise HTTPException(status_code=404, detail=f"Glossary entry not found: {entry_id}")
+        raise HTTPException(status_code=404, detail=f"Запись глоссария не найдена: {entry_id}")
 
     await translation_service.journal_service.log_info(
         JournalStage.GLOSSARY,
@@ -1188,7 +1189,7 @@ async def delete_glossary_entry(
     svc = await translation_service.get_glossary_service()
     existing = await svc.repository.find_by_id(entry_id, table_name=svc._table_for(collection_id))
     if not existing:
-        raise HTTPException(status_code=404, detail=f"Glossary entry not found: {entry_id}")
+        raise HTTPException(status_code=404, detail=f"Запись глоссария не найдена: {entry_id}")
 
     await svc.delete_entry(entry_id, collection_id=collection_id)
     await translation_service.journal_service.log_info(
@@ -1209,7 +1210,7 @@ async def get_journal(
     """Get processing journal for a specific date (YYYY-MM-DD)."""
     journal = await translation_service.journal_service.get_journal_for_date(date)
     if not journal:
-        raise HTTPException(status_code=404, detail=f"Journal not found for date: {date}")
+        raise HTTPException(status_code=404, detail=f"Журнал не найден для даты: {date}")
     return JournalResponseSchema(
         date=journal.date,
         entries=[
@@ -1233,7 +1234,7 @@ async def get_latest_journal(
     """Get the most recent processing journal."""
     journals = await translation_service.journal_service.get_recent_journals(limit=1)
     if not journals:
-        raise HTTPException(status_code=404, detail="No journals found")
+        raise HTTPException(status_code=404, detail="Журналы не найдены")
     journal = journals[0]
     return JournalResponseSchema(
         date=journal.date,
@@ -1288,7 +1289,7 @@ def _check_job_owner(job: Job, auth: AuthCredentials) -> None:
         return
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="You do not have access to this job",
+        detail="У вас нет доступа к этой задаче",
     )
 
 
@@ -1310,7 +1311,7 @@ async def get_job_status(
     """Get job status, progress, ETA, and queue position."""
     job = await translation_service.job_manager.get_job(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+        raise HTTPException(status_code=404, detail=f"Задача не найдена: {job_id}")
     _check_job_owner(job, request.state.auth)
     schema = _job_to_schema(job)
     schema.queue_position = await user_job_queue.get_position(job_id)
@@ -1326,11 +1327,11 @@ async def cancel_job(
     """Cancel an active or queued translation job."""
     job = await translation_service.job_manager.get_job(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+        raise HTTPException(status_code=404, detail=f"Задача не найдена: {job_id}")
     _check_job_owner(job, request.state.auth)
     job = await translation_service.job_manager.cancel_job(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+        raise HTTPException(status_code=404, detail=f"Задача не найдена: {job_id}")
     # Clean up queue tracking if job was still pending
     await user_job_queue.cancel_pending(job_id)
     # Clean up temp dir immediately for never-started jobs
@@ -1354,13 +1355,13 @@ async def download_job_result(
     """
     job = await translation_service.job_manager.get_job(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+        raise HTTPException(status_code=404, detail=f"Задача не найдена: {job_id}")
     _check_job_owner(job, request.state.auth)
     if job.status != JobStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail=f"Job is not completed (status: {job.status.value})")
+        raise HTTPException(status_code=400, detail=f"Задача не завершена (статус: {job.status.value})")
     output_path = Path(job.output_file_path)
     if not output_path.exists():
-        raise HTTPException(status_code=404, detail="Translated file not found on server")
+        raise HTTPException(status_code=404, detail="Переведённый файл не найден на сервере")
 
     # Delete the entire temp directory after serving the file
     temp_dir = job.metadata.get("temp_dir", str(output_path.parent))

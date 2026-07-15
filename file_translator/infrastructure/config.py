@@ -9,6 +9,18 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 
+# ── Centralized constants ──────────────────────────────────────────────
+MAX_UPLOAD_SIZE_BYTES: int = int(os.getenv("MAX_UPLOAD_SIZE", str(128 * 1024 * 1024)))
+JOB_TTL_SECONDS: int = int(os.getenv("JOB_TTL_SECONDS", "3600"))
+JOB_MAX_TTL_SECONDS: int = int(os.getenv("JOB_MAX_TTL_SECONDS", "3600"))
+TIKAL_TIMEOUT_SECONDS: int = int(os.getenv("TIKAL_TIMEOUT", "300"))
+CLEANUP_INTERVAL_SECONDS: int = int(os.getenv("CLEANUP_INTERVAL", "1800"))
+DELIVERY_RATIO_THRESHOLD: float = float(os.getenv("DELIVERY_RATIO_THRESHOLD", "0.75"))
+MAX_SPLIT_DEPTH: int = int(os.getenv("MAX_SPLIT_DEPTH", "3"))
+STALE_JOB_TTL_SECONDS: int = int(os.getenv("STALE_JOB_TTL", "300"))
+# ───────────────────────────────────────────────────────────────────────
+
+
 @dataclass(frozen=True)
 class LLMConfig:
     """Configuration for LLM translation provider."""

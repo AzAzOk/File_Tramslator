@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
 
+from file_translator.infrastructure.config import TIKAL_TIMEOUT_SECONDS
+
 logger = logging.getLogger(__name__)
 
 # XLIFF 1.2 namespace
@@ -197,7 +199,7 @@ class OkapiService:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=TIKAL_TIMEOUT_SECONDS,
                 cwd=str(output_dir),
             )
         except FileNotFoundError as e:
@@ -206,7 +208,7 @@ class OkapiService:
                 f"Command tried: {' '.join(self.tikal_cmd)}"
             ) from e
         except subprocess.TimeoutExpired:
-            raise OkapiServiceError("Tikal extraction timed out (300s)")
+            raise OkapiServiceError(f"Tikal extraction timed out ({TIKAL_TIMEOUT_SECONDS}s)")
 
         if result.returncode != 0:
             logger.error(f"Tikal extract stderr: {result.stderr}")
@@ -534,7 +536,7 @@ class OkapiService:
                     cmd,
                     capture_output=True,
                     text=True,
-                    timeout=300,
+                    timeout=TIKAL_TIMEOUT_SECONDS,
                     cwd=str(merge_dir),
                 )
             except FileNotFoundError as e:
@@ -542,7 +544,7 @@ class OkapiService:
                     f"Tikal CLI not found. Command tried: {' '.join(self.tikal_cmd)}"
                 ) from e
             except subprocess.TimeoutExpired:
-                raise OkapiServiceError("Tikal merge timed out (300s)")
+                raise OkapiServiceError(f"Tikal merge timed out ({TIKAL_TIMEOUT_SECONDS}s)")
 
             if result.returncode != 0:
                 logger.error(f"Tikal merge stderr: {result.stderr}")

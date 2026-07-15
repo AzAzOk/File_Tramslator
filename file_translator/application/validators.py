@@ -9,11 +9,9 @@ from typing import Any
 
 from file_translator.domain.interfaces import DocumentValidator
 from file_translator.domain.validation import ValidationReport, ValidationResult, ValidationSeverity
+from file_translator.infrastructure.config import MAX_UPLOAD_SIZE_BYTES, STALE_JOB_TTL_SECONDS
 
 logger = logging.getLogger(__name__)
-
-_MAX_FILE_SIZE_BYTES = 128 * 1024 * 1024  # 128 MB
-_STALE_JOB_TTL_SECONDS = 300  # 5 minutes
 
 
 class FileSizeValidator(DocumentValidator):
@@ -22,18 +20,18 @@ class FileSizeValidator(DocumentValidator):
     async def validate(self, file_path: Path, context: dict[str, Any] | None = None) -> ValidationResult:
         try:
             size = file_path.stat().st_size
-            if size > _MAX_FILE_SIZE_BYTES:
+            if size > MAX_UPLOAD_SIZE_BYTES:
                 return ValidationResult(
                     code="FILE_SIZE_EXCEEDED",
-                    message=f"File size ({size / 1024 / 1024:.1f} MB) exceeds maximum allowed (128 MB)",
+                    message=f"Размер файла ({size / 1024 / 1024:.1f} МБ) превышает максимально допустимый (128 МБ)",
                     severity=ValidationSeverity.ERROR,
-                    details={"size_bytes": size, "max_bytes": _MAX_FILE_SIZE_BYTES},
+                    details={"size_bytes": size, "max_bytes": MAX_UPLOAD_SIZE_BYTES},
                 )
             return None
         except OSError as e:
             return ValidationResult(
                 code="FILE_SIZE_ERROR",
-                message=f"Cannot determine file size: {e}",
+                message=f"Не удалось определить размер файла: {e}",
                 severity=ValidationSeverity.ERROR,
             )
 
@@ -45,13 +43,13 @@ class FileAccessValidator(DocumentValidator):
         if not file_path.exists():
             return ValidationResult(
                 code="FILE_NOT_FOUND",
-                message=f"File not found: {file_path}",
+                message=f"Файл не найден: {file_path}",
                 severity=ValidationSeverity.ERROR,
             )
         if not file_path.is_file():
             return ValidationResult(
                 code="FILE_NOT_A_FILE",
-                message=f"Path is not a file: {file_path}",
+                message=f"Путь не является файлом: {file_path}",
                 severity=ValidationSeverity.ERROR,
             )
         try:
@@ -61,13 +59,13 @@ class FileAccessValidator(DocumentValidator):
         except PermissionError:
             return ValidationResult(
                 code="FILE_LOCKED",
-                message="File is locked or inaccessible (permission denied)",
+                message="Файл заблокирован или недоступен (доступ запрещён)",
                 severity=ValidationSeverity.ERROR,
             )
         except OSError as e:
             return ValidationResult(
                 code="FILE_ACCESS_ERROR",
-                message=f"Cannot access file: {e}",
+                message=f"Не удалось получить доступ к файлу: {e}",
                 severity=ValidationSeverity.ERROR,
             )
 
@@ -87,7 +85,7 @@ class FileStructureValidator(DocumentValidator):
         # Other formats: no structural validation available — warn but don't block
         return ValidationResult(
             code="STRUCTURE_NOT_CHECKED",
-            message=f"Structural validation not implemented for {suffix} files",
+            message=f"Структурная проверка не реализована для файлов {suffix}",
             severity=ValidationSeverity.WARNING,
         )
     
@@ -104,7 +102,7 @@ class FileStructureValidator(DocumentValidator):
                     if req not in names:
                         return ValidationResult(
                             code="STRUCTURE_INVALID",
-                            message=f"Invalid DOCX structure: missing {req}",
+                            message=f"Неверная структура DOCX: отсутствует {req}",
                             severity=ValidationSeverity.ERROR,
                             details={"missing": req, "found_files": len(names)},
                         )
@@ -113,13 +111,13 @@ class FileStructureValidator(DocumentValidator):
         except zipfile.BadZipFile:
             return ValidationResult(
                 code="STRUCTURE_BAD_ZIP",
-                message="File is not a valid ZIP archive (required for DOCX)",
+                message="Файл не является валидным ZIP-архивом (требуется для DOCX)",
                 severity=ValidationSeverity.ERROR,
             )
         except Exception as e:
             return ValidationResult(
                 code="STRUCTURE_ERROR",
-                message=f"File structure validation failed: {e}",
+                message=f"Ошибка проверки структуры файла: {e}",
                 severity=ValidationSeverity.ERROR,
             )
 
@@ -134,7 +132,7 @@ class LanguageMismatchValidator(DocumentValidator):
         if source and target and source.lower() == target.lower():
             return ValidationResult(
                 code="LANGUAGE_MISMATCH",
-                message=f"Source and target languages are the same: {source}",
+                message=f"Исходный и целевой языки совпадают: {source}",
                 severity=ValidationSeverity.ERROR,
                 details={"source": source, "target": target},
             )
@@ -154,7 +152,7 @@ class ConcurrentJobValidator(DocumentValidator):
         if not self._job_manager:
             return ValidationResult(
                 code="CONCURRENCY_NOT_CHECKED",
-                message="Concurrent job check not available",
+                message="Проверка параллельных задач недоступна",
                 severity=ValidationSeverity.WARNING,
             )
         
@@ -170,7 +168,7 @@ class ConcurrentJobValidator(DocumentValidator):
                         continue
                     return ValidationResult(
                         code="CONCURRENT_PROCESSING",
-                        message=f"File '{filename}' is already being processed (job: {job.job_id})",
+                        message=f"Файл '{filename}' уже обрабатывается (задача: {job.job_id})",
                         severity=ValidationSeverity.ERROR,
                         details={"job_id": job.job_id, "filename": filename},
                     )
@@ -179,7 +177,7 @@ class ConcurrentJobValidator(DocumentValidator):
         except Exception as e:
             return ValidationResult(
                 code="CONCURRENCY_CHECK_ERROR",
-                message=f"Concurrent check failed: {e}",
+                message=f"Ошибка проверки параллельных задач: {e}",
                 severity=ValidationSeverity.ERROR,
             )
     
@@ -196,7 +194,7 @@ class ConcurrentJobValidator(DocumentValidator):
         try:
             started_dt = datetime.fromisoformat(started)
             elapsed = (datetime.now(timezone.utc) - started_dt).total_seconds()
-            return elapsed > _STALE_JOB_TTL_SECONDS
+            return elapsed > STALE_JOB_TTL_SECONDS
         except (ValueError, TypeError):
             return True
 
@@ -236,7 +234,7 @@ class ValidationChain:
             except Exception as e:
                 report.add(ValidationResult(
                     code="VALIDATOR_ERROR",
-                    message=f"Validator {validator.__class__.__name__} failed: {e}",
+                    message=f"Валидатор {validator.__class__.__name__} завершился с ошибкой: {e}",
                     severity=ValidationSeverity.ERROR,
                 ))
                 return report

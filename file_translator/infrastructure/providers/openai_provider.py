@@ -13,7 +13,7 @@ import httpx
 from file_translator.domain.interfaces import TranslationProvider
 from file_translator.domain.models import LanguageCode, TextUnit, TranslationBatch, TranslationMode, TranslationStyle
 from file_translator.domain.errors import ModelUnavailableError, TranslationError
-from file_translator.infrastructure.config import LLMConfig, AppConfig
+from file_translator.infrastructure.config import LLMConfig, AppConfig, DELIVERY_RATIO_THRESHOLD, MAX_SPLIT_DEPTH
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,7 @@ class OpenAITranslationProvider(TranslationProvider):
             ModelUnavailableError: If the model endpoint is not reachable.
             TranslationError: If translation fails or response is invalid.
         """
-        if _split_depth > 3:
+        if _split_depth > MAX_SPLIT_DEPTH:
             logger.error(f"Split depth limit exceeded for batch, returning partial results")
             return []
         
@@ -312,7 +312,7 @@ class OpenAITranslationProvider(TranslationProvider):
                         f"{len(result)}/{expected_count} units delivered ({delivered_ratio:.0%}). "
                         f"Missing unit IDs: {missing_ids}"
                     )
-                    if delivered_ratio < 0.75 and expected_count > 1:
+                    if delivered_ratio < DELIVERY_RATIO_THRESHOLD and expected_count > 1:
                         logger.info(
                             f"Only {delivered_ratio:.0%} coverage, splitting batch "
                             f"{batch.sequence_id} and retrying..."
