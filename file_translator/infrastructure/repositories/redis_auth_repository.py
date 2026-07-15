@@ -26,10 +26,12 @@ class RedisTokenBlacklist:
 
     async def _conn(self) -> Redis:
         if self._redis is None:
+            password = os.environ.get("REDIS_PASSWORD", "")
             self._redis = Redis(
                 host=os.environ.get("REDIS_HOST", "localhost"),
                 port=int(os.environ.get("REDIS_PORT", "6379")),
                 db=0,
+                password=password or None,
                 decode_responses=True,
             )
         return self._redis

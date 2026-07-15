@@ -12,6 +12,7 @@ from redis.asyncio import Redis
 
 from file_translator.domain.interfaces import JobRepository
 from file_translator.domain.job import Job, JobStatus, ProcessingStage
+from file_translator.infrastructure.config import JOB_TTL_SECONDS, JOB_MAX_TTL_SECONDS
 
 
 def _default_serializer(obj: Any) -> str:
@@ -33,18 +34,20 @@ class RedisJobRepository(JobRepository):
 
     _KEY_PREFIX = "job:"
     _INDEX_KEY = "job:index"
-    _TERMINAL_TTL = int(os.environ.get("JOB_TTL_SECONDS", "3600"))  # default 1 hour for terminal jobs
-    _MAX_TTL = int(os.environ.get("JOB_MAX_TTL_SECONDS", "3600"))   # safety net: 1 hour for any job
+    _TERMINAL_TTL = JOB_TTL_SECONDS
+    _MAX_TTL = JOB_MAX_TTL_SECONDS
 
     def __init__(self, redis: Redis | None = None):
         self._redis = redis
 
     async def _conn(self) -> Redis:
         if self._redis is None:
+            password = os.environ.get("REDIS_PASSWORD", "")
             self._redis = Redis(
                 host=os.environ.get("REDIS_HOST", "localhost"),
                 port=int(os.environ.get("REDIS_PORT", "6379")),
                 db=0,
+                password=password or None,
                 decode_responses=True,
             )
         return self._redis
