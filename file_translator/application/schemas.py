@@ -25,7 +25,7 @@ class TranslationRequestSchema(BaseModel):
         """Validate language code."""
         valid_codes = {"ru", "en", "sr", "zh", "auto"}
         if v.lower() not in valid_codes:
-            raise ValueError(f"Invalid language code. Must be one of: {', '.join(valid_codes)}")
+            raise ValueError(f"Неверный код языка. Допустимые значения: {', '.join(valid_codes)}")
         return v.lower()
     
     @field_validator("translation_style")
@@ -34,7 +34,7 @@ class TranslationRequestSchema(BaseModel):
         """Validate translation style."""
         valid_styles = {"technical", "legal", "mixed"}
         if v.lower() not in valid_styles:
-            raise ValueError(f"Invalid translation style. Must be one of: {', '.join(valid_styles)}")
+            raise ValueError(f"Неверный стиль перевода. Допустимые значения: {', '.join(valid_styles)}")
         return v.lower()
     
     @field_validator("translation_mode")
@@ -43,7 +43,7 @@ class TranslationRequestSchema(BaseModel):
         """Validate translation mode."""
         valid_modes = {"full", "filter_source"}
         if v.lower() not in valid_modes:
-            raise ValueError(f"Invalid translation mode. Must be one of: {', '.join(valid_modes)}")
+            raise ValueError(f"Неверный режим перевода. Допустимые значения: {', '.join(valid_modes)}")
         return v.lower()
 
 

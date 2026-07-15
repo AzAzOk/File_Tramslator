@@ -248,7 +248,7 @@ class TranslationService:
             # Step 2: Find appropriate translator
             translator = self._find_translator(input_path)
             if not translator:
-                raise ValueError(f"No suitable translator found for format: {input_path.suffix}")
+                raise ValueError(f"Не найден подходящий переводчик для формата: {input_path.suffix}")
             
             logger.info(f"Using translator: {translator.__class__.__name__}")
             
