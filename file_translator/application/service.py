@@ -259,7 +259,7 @@ class TranslationService:
             
             # Step 3: Extract text units from document
             await self.job_manager.update_progress(job_id, JobStage.EXTRACTION)
-            
+
             # Check cancellation before extraction
             if await self.job_manager.is_cancelled(job_id):
                 logger.warning(f"Job {job_id} cancelled during extraction phase start")
@@ -268,7 +268,14 @@ class TranslationService:
                     errors=["Operation cancelled by user"],
                     duration_seconds=time.time() - start_time,
                 )
-            
+
+            if not input_path.exists():
+                logger.error(f"File disappeared before extract(): {input_path}")
+                raise DocumentOpenError(
+                    file_path=str(input_path),
+                    reason="File not found at extract time",
+                )
+
             extracted_data = translator.extract(
                 input_path,
                 source_lang=source_lang.value,

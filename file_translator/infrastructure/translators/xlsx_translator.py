@@ -37,8 +37,8 @@ from file_translator.infrastructure.classifiers.xlsx_content_classifier import (
 
 logger = logging.getLogger(__name__)
 
-# Safety limit: reject archives with uncompressed XML content over 256 MB
-_MAX_ARCHIVE_XML_SIZE = 256 * 1024 * 1024  # 256 MB
+# Safety limit: reject archives with uncompressed XML content over 512 MB
+_MAX_ARCHIVE_XML_SIZE = 512 * 1024 * 1024  # 512 MB
 
 _NSMAP = {
     "s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
@@ -305,6 +305,9 @@ class XlsxTranslator(DocumentTranslator):
         self._temp_dir = Path(tempfile.mkdtemp(prefix="xlsx_"))
         actual_path: Path = file_path
 
+        file_size = actual_path.stat().st_size
+        logger.info(f"XLSX file check: {actual_path} ({file_size} bytes)")
+
         try:
             if file_path.suffix.lower() == ".xls":
                 from file_translator.infrastructure.converters.doc_to_docx_converter import (
@@ -402,11 +405,14 @@ class XlsxTranslator(DocumentTranslator):
         extracted_data["translations_applied"] = len(translations)
         return extracted_data
 
-    def save(self, translated_data: dict[str, Any], output_path: Path) -> None:
+    def save(self, translated_data: dict[str, Any], output_path: Path) -> Path:
         """Save translated XLSX by writing back modified XML files.
 
         Copies the original XLSX, then replaces modified XML entries
         in-place. Unchanged files are preserved as-is.
+
+        Returns:
+            Path to the saved output file.
         """
         archive_data = translated_data.get("archive_data", {})
         document_path = Path(translated_data.get("document_path", ""))
@@ -449,6 +455,8 @@ class XlsxTranslator(DocumentTranslator):
             )
         finally:
             self._cleanup()
+
+        return output_path
 
     # ── Private helpers ──
 
