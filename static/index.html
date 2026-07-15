@@ -1316,18 +1316,17 @@ function waitFor(delayMs) {
 
 async function pollJobStatus(jobId) {
   if (!activeJobs[jobId]) return;
-  let elapsed = 0;
-  const maxWait = 30 * 60 * 1000; // 30 минут максимум
   let retries = 0;
   const maxRetries = 5;
   let retryToastShown = false;
+  let longWaitWarningShown = false;
+  const startTime = Date.now();
   
-  while (elapsed < maxWait) {
+  while (true) {
     // Exponential backoff for retries: 2s, 4s, 8s, 16s, 30s max
     const delay = retries > 0 ? Math.min(2000 * Math.pow(2, retries - 1), 30000) : 2000;
     await waitFor(delay);
-    elapsed += (_wasHidden && !_pageClosing) ? Math.max(delay * 3, 5000) : delay;
-    if (_pageClosing || !activeJobs[jobId]) return; // страница закрывается / job удалён
+    if (_pageClosing || !activeJobs[jobId]) return;
     try {
       const resp = await authFetch(`/job/${jobId}`);
       if (!resp.ok) {
@@ -1378,6 +1377,11 @@ async function pollJobStatus(jobId) {
         }
         return;
       }
+      if (!longWaitWarningShown && (Date.now() - startTime) > 30 * 60 * 1000) {
+        longWaitWarningShown = true;
+        showToast('Задача выполняется дольше обычного, ожидаем...', 'info', false);
+        addLog('Задача выполняется дольше 30 мин — продолжаем ожидание', 'text-[var(--c-text-muted)]');
+      }
     } catch (e) {
       if (!activeJobs[jobId]) return;
       retries++;
@@ -1397,15 +1401,6 @@ async function pollJobStatus(jobId) {
       console.warn(`Повторная попытка ${retries}/${maxRetries} для job ${jobId}:`, e.message);
     }
   }
-  
-  // Достигнут таймаут 30 минут
-  if (!activeJobs[jobId]) return;
-  activeJobs[jobId].status = 'failed';
-  activeJobs[jobId].error = 'Превышено время ожидания (30 мин)';
-  activeJobs[jobId].completedAt = Date.now();
-  updateJobStatusUI(jobId);
-  showToast('❌ Превышено время ожидания перевода', 'error', true);
-  addLog('Таймаут: превышено время ожидания 30 мин', 'text-[var(--c-error)]');
 }
 
 window.downloadJob = async function(jobId) {
