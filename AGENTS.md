@@ -107,10 +107,10 @@ Main UI at `static/index.html`, served directly by FastAPI (`StaticFiles` mount 
 **Problem (2)**: When `word_count < number_of_content_groups`, `max(1, round(...))` tried to give every group ≥1 word but ran out — overflow consumed words from remainder.
 **Fix (2)**: New branch handles `word_count <= len(content_groups)` by sorting groups by original content length and distributing one word at a time to the heaviest groups. Empty groups get `""`.
 
-### `_translate_with_split` — recursion depth limit (2026-06-17)
+### `_translate_with_split` — recursion depth limit (2026-06-17, updated 2026-07-15)
 **Problem**: No bound on recursive splitting. If a single-unit batch consistently returns incomplete results, infinite `translate_batch → _translate_with_split` recursion causes stack overflow.
 
-**Fix**: `_split_depth` parameter (default 0) propagated through call chain. `translate_batch` returns `[]` at depth > 3. All split calls pass `depth + 1`.
+**Fix**: `_split_depth` parameter (default 0) propagated through call chain. `translate_batch` raises `TranslationError` at depth > 3 (was: returned `[]` silently). All split calls pass `depth + 1`.
 
 ### `save()` — XML namespace registration (2026-06-17)
 **Problem**: `ET.write()` replaces registered namespace prefixes (`w:`, `r:`, `mc:`, etc.) with auto-generated `ns0:`, `ns1:`, … → Word rejects the file. Hardcoded list missed ~9 namespaces (`m:`, `w14:`, `mo:`, `wp14:`, etc.) → formula elements and other features broken.
@@ -135,14 +135,14 @@ Main UI at `static/index.html`, served directly by FastAPI (`StaticFiles` mount 
 **Problem**: Previously `_fix_cjk_fonts_in_docx()` and `_fix_table_row_heights()` were called sequentially in `save()`, each opening/closing the DOCX ZIP archive separately — reading all files into memory twice.
 **Fix**: Combined both fixes into a single `_post_process_docx()` method that processes the DOCX archive in one pass: read once → modify XML files (both CJK + height) → write back atomically via temp file + os.replace. Reduced I/O operations by 50%.
 
-## Test suite (2026-07-03)
-**89 tests** (1 skipped — requires running API server).
+## Test suite (2026-07-15)
+**187 tests** (1 skipped — requires running API server).
 
 | Layer | File | Tests |
 |-------|------|-------|
 | Domain models | `tests/unit/test_domain_models.py` | 7 |
 | DocxTranslator unit | `tests/unit/test_docx_translator.py` | 7 |
-| OpenAI provider unit | `tests/unit/test_translation_provider.py` | 3 |
+| OpenAI provider unit | `tests/unit/test_translation_provider.py` | 4 |
 | OkapiService unit | `tests/unit/test_okapi_service.py` | 28 (XLIFF parse/save, plain‑text extraction, inline‑code distribution) |
 | Docx pipeline integration | `tests/integration/test_docx_pipeline.py` | 26 (can_process, post‑process, extract→translate→save with mocked Tikal) |
 | XlsxTranslator unit | `tests/unit/test_xlsx_translator.py` | 12 (extract, translate, save, shared strings, inline, comments, rich text, empty, serialization no‑ns0) |
@@ -227,3 +227,28 @@ Remaining (low priority / out of scope):
 - `file_translator/presentation/api/app.py` — `_cleanup_orphaned_temp_dirs()`, `_cleanup_temp_dir()`, download cleanup via `BackgroundTasks`
 - `file_translator/infrastructure/translators/xlsx_translator.py` — `XlsxTranslator` (ZIP + lxml, shared strings, inline strings, comments, rich text)
 - `file_translator/infrastructure/converters/doc_to_docx_converter.py` — `LibreOfficeConverter` (.doc→.docx, .xls→.xlsx)
+
+## History of Changes (2026-07-15)
+
+### Cancel endpoint race condition fix
+**Problem**: Cancel endpoint always deleted `temp_dir` for any cancelled job — including RUNNING ones. If user cancelled during an `await` in `translate_document()`, the temp dir was deleted while `extract()` was about to run → `DocumentOpenError`.
+
+**Fix**: `app.py` cancel endpoint now checks `was_running = job.status == JobStatus.RUNNING` before calling `cancel_job()`. Temp dir is only deleted for pending/queued jobs. Running jobs detect cancellation at the next safe checkpoint and clean up themselves.
+
+### DocumentOpenError — reason in message string
+**Problem**: `DocumentOpenError` stored `reason` only in `context` dict, not in the message string. Logs showed `"Не удалось открыть документ: path"` without the actual cause (file not found vs XML too large vs failed to read archive).
+
+**Fix**: `errors.py` now appends `reason` to the message: `"Не удалось открыть документ: path — reason"`.
+
+### XLSX diagnostics + limit increase
+**Problem**: XLSX file `Копия УчПлан_2026 1.xlsx` (32 MB) failed with `"Не удалось открыть документ"` — no details why. Previous logs couldn't distinguish "file not found" from "XML too large".
+
+**Fix**: 
+- `service.py`: file existence check before `extract()` with dedicated log
+- `xlsx_translator.py`: log file size before opening
+- `_MAX_ARCHIVE_XML_SIZE` increased from 256 MB to 512 MB (file had 285.6 MB uncompressed XML)
+
+### Frontend polling — removed 30-minute timeout
+**Problem**: `pollJobStatus()` had `while (elapsed < maxWait)` with `maxWait = 30 min`. After timeout, job was marked `failed` in UI — but backend was still running. On page reload, `restoreActiveJobs()` fetched jobs from API, saw them still active → they reappeared.
+
+**Fix**: Polling now runs `while (true)` until backend reports terminal state (completed/failed/cancelled). After 30 minutes, shows info toast "Задача выполняется дольше обычного" instead of false-fail.
