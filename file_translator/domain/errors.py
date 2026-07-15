@@ -18,6 +18,8 @@ class DocumentOpenError(DocumentTranslatorError):
     
     def __init__(self, file_path: str = "", reason: str = ""):
         message = f"Не удалось открыть документ: {file_path}" if file_path else "Не удалось открыть документ"
+        if reason:
+            message += f" — {reason}"
         super().__init__(message, {"file_path": file_path, "reason": reason})
 
 
