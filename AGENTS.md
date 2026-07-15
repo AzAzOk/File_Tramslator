@@ -9,10 +9,10 @@ File Translator v2.0.0 — FastAPI backend that translates DOCX files via LLM (O
 - `file_translator/infrastructure/` — providers (OpenAI), translators (DOCX), repositories (MySQL journals/glossary)
 - `file_translator/presentation/` — FastAPI routes
 - `frontend/` — React + Vite + TypeScript + Tailwind v4 SPA
-- Database: MySQL (glossary, jobs, journal)
-- LLM: OpenAI with `gpt-4o-mini`
+- Database: MySQL (glossary, journal), MongoDB (auth), Redis (jobs, token blacklist)
+- LLM: OpenAI-compatible with `qwen3.6-35b-a3b-claude-4.6-opus-reasoning-distilled`
 - Storage local (`./uploads`, `./output`, `./logs` journal JSON files)
-- Auth: stub only (no real auth)
+- Auth: JWT + LDAP (Active Directory) + RBAC (ADMIN, OPERATOR, VIEWER, API roles)
 
 ## Key Decisions
 - FILTER_BY_SOURCE: **server-side + prompt**. Before batching, `service.py` runs `detect_language()` on each text unit and skips those not matching source language. The LLM prompt still carries the filter instruction as a safety net. This fixes unreliable LLM-only filtering (Russian → Chinese, missed English).
