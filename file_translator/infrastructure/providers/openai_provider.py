@@ -249,37 +249,55 @@ class OpenAITranslationProvider(TranslationProvider):
                     try:
                         parsed_json = json.loads(content)
                     except json.JSONDecodeError as e:
-                        # Try to extract valid JSON prefix (handles truncation)
-                        fixed = self._try_extract_valid_json(content)
-                        if fixed is not None:
-                            recovered = json.loads(fixed)
-                            recovered_count = len(recovered.get("translations", []))
-                            expected_count = len(batch.text_units)
-                            if recovered_count < expected_count:
-                                logger.warning(
-                                    f"Recovered truncated JSON for batch {batch.sequence_id}: "
-                                    f"{recovered_count}/{expected_count} units — "
-                                    f"LLM response was truncated, "
-                                    f"missing {expected_count - recovered_count} unit(s)"
-                                )
-                            else:
-                                logger.warning(
-                                    f"Recovered truncated JSON for batch {batch.sequence_id} "
-                                    f"({recovered_count} units) by trimming trailing garbage"
-                                )
-                            content = fixed
-                            parsed_json = json.loads(content)
-                        elif len(batch.text_units) > 1:
+                        # Try wrapping as translations array — handles LLM returning
+                        # unwrapped object list like {"id":"1","text":"..."},{"id":"2","text":"..."}
+                        try:
+                            wrapped = '{"translations": [' + content + ']}'
+                            parsed_json = json.loads(wrapped)
                             logger.warning(
-                                f"JSON parse failed for batch {batch.sequence_id} "
-                                f"({len(batch.text_units)} units), splitting and retrying..."
+                                f"Recovered JSON for batch {batch.sequence_id} "
+                                f"by wrapping unwrapped object list in translations array"
                             )
-                            return await self._translate_with_split(batch_data, _split_depth + 1)
-                        else:
-                            snippet = content[:300] if content else "<empty>"
-                            raise TranslationError(
-                                reason=f"Invalid JSON response (single unit): {str(e)} | snippet: {snippet}"
-                            ) from e
+                        except json.JSONDecodeError:
+                            # Try to extract valid JSON prefix (handles truncation)
+                            fixed = self._try_extract_valid_json(content)
+                            if fixed is not None:
+                                recovered = json.loads(fixed)
+                                recovered_count = len(recovered.get("translations", []))
+                                expected_count = len(batch.text_units)
+                                if recovered_count < expected_count:
+                                    logger.warning(
+                                        f"Recovered truncated JSON for batch {batch.sequence_id}: "
+                                        f"{recovered_count}/{expected_count} units — "
+                                        f"LLM response was truncated, "
+                                        f"missing {expected_count - recovered_count} unit(s)"
+                                    )
+                                else:
+                                    logger.warning(
+                                        f"Recovered truncated JSON for batch {batch.sequence_id} "
+                                        f"({recovered_count} units) by trimming trailing garbage"
+                                    )
+                                content = fixed
+                                parsed_json = json.loads(content)
+                            elif len(batch.text_units) > 1:
+                                logger.warning(
+                                    f"JSON parse failed for batch {batch.sequence_id} "
+                                    f"({len(batch.text_units)} units), splitting and retrying..."
+                                )
+                                return await self._translate_with_split(batch_data, _split_depth + 1)
+                            else:
+                                snippet = content[:300] if content else "<empty>"
+                                raise TranslationError(
+                                    reason=f"Invalid JSON response (single unit): {str(e)} | snippet: {snippet}"
+                                ) from e
+                
+                # Handle unwrapped single translation object
+                # e.g. {"id": "p_0", "text": "..."} instead of {"translations": [...]}
+                if "translations" not in parsed_json and "id" in parsed_json and "text" in parsed_json:
+                    parsed_json = {"translations": [parsed_json]}
+                    logger.warning(
+                        f"Recovered single unwrapped object for batch {batch.sequence_id}"
+                    )
                 
                 translations = parsed_json.get("translations", [])
                 

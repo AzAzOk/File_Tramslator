@@ -300,12 +300,30 @@ class OkapiService:
         """
         return OkapiService._simple_plain_text(element)
 
+    _PLACEHOLDER_TAGS = {"bpt", "ept", "ph", "it"}
+
     @staticmethod
     def _simple_plain_text(element: ET.Element) -> str:
-        """Extract plain text, stripping XML tags and Tikal inline code artifacts."""
-        xml_str = ET.tostring(element, encoding="unicode")
-        text = re.sub(r"<[^>]+>", " ", xml_str)
-        text = html.unescape(text)
+        """Extract plain text, stripping XML tags and Tikal inline code artifacts.
+
+        Walks the element tree to collect visible text, explicitly skipping
+        .text of placeholder tags (<bpt>/<ept>/<ph>/<it>) whose content is
+        inline code markup (e.g. "&lt;hyperlink1&gt;"), not visible text.
+        """
+        parts: list[str] = []
+
+        def walk(el: ET.Element) -> None:
+            if el.text:
+                parts.append(el.text)
+            for child in el:
+                tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+                if tag not in OkapiService._PLACEHOLDER_TAGS:
+                    walk(child)
+                if child.tail:
+                    parts.append(child.tail)
+
+        walk(element)
+        text = html.unescape("".join(parts))
         text = re.sub(r"</?run\d+\s*/?>", "", text)
         text = re.sub(r"</?tags?\d*\s*/?>", "", text)
         text = re.sub(r"\s+", " ", text).strip()
@@ -416,9 +434,14 @@ class OkapiService:
             positions.append((target_elem, False, source_elem.text))
 
         for src_child, tgt_child in zip(source_elem, target_elem):
+            local_tag = src_child.tag.split('}')[-1] if '}' in src_child.tag else src_child.tag
+            is_inline_marker = local_tag in ('bpt', 'ept', 'ph')
             if src_child.text is not None:
                 tgt_child.text = src_child.text
-                positions.append((tgt_child, False, src_child.text))
+                # bpt/ept/ph: .text is an inline code marker (e.g. "<run1>"),
+                # NOT visible text. Preserve it but don't consume translation words.
+                if not is_inline_marker:
+                    positions.append((tgt_child, False, src_child.text))
             if src_child.tail is not None:
                 tgt_child.tail = src_child.tail
                 positions.append((tgt_child, True, src_child.tail))
@@ -470,6 +493,7 @@ class OkapiService:
         counts = [raw_counts.get(i, 0) for i in range(len(positions))]
 
         word_idx = 0
+        prev_had_trailing_ws = False
         for i, (elem, is_tail, orig_text) in enumerate(positions):
             n = counts[i]
             if is_ws[i]:
@@ -485,11 +509,17 @@ class OkapiService:
             if is_tail:
                 leading_match = re.match(r'^(\s*)', orig_text)
                 leading = leading_match.group(1) if leading_match else ""
+                # Strip leading whitespace if previous .text already added trailing ws
+                # — prevents doubling separator between fragmented <w:r> elements.
+                if prev_had_trailing_ws and leading:
+                    leading = ""
                 elem.tail = leading + chunk
+                prev_had_trailing_ws = False
             else:
                 trailing_match = re.search(r'(\s*)$', orig_text)
                 trailing = trailing_match.group(1) if trailing_match else ""
                 elem.text = chunk + trailing
+                prev_had_trailing_ws = bool(trailing)
 
     def merge_from_xliff(
         self,

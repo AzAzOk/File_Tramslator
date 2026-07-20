@@ -17,7 +17,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      - JOB_TTL_SECONDS=3600
+      - JOB_TTL_SECONDS=86400
       - GLOSSARY_DB_HOST=dbserver.onhp.local
       - GLOSSARY_DB_PORT=3306
       - GLOSSARY_DB_USER=glossary

@@ -345,6 +345,61 @@ class TestSetTargetWithInlineCodes:
         assert any(c.get("id") == "1" for c in children)
         assert any(c.get("id") == "2" for c in children)
 
+    def test_bpt_ept_do_not_consume_translation_words(self):
+        """bpt/ept/ph .text are inline code markers, not visible text.
+        They must NOT consume words in the water-fill distribution,
+        otherwise visible text in .tail gets 0 words when there are
+        many inline code markers."""
+        source = _make_source(
+            '<bpt id="1">&lt;run1&gt;</bpt>'
+            'Visible'
+            '<ept id="1">&lt;/run1&gt;</ept>'
+            ' text'
+            '<ph id="2">&lt;tab/&gt;</ph>'
+            ' here'
+        )
+        target = copy.deepcopy(source)
+        # With no bpt/ept/ph fix: 3 words ÷ 6 positions ≈ 0 words each
+        # → markers consume all words, visible tails get "" (bug).
+        # With fix: 3 words ÷ 3 tail positions = 1 word each; markers skipped.
+        OkapiService._set_target_with_inline_codes(
+            source, target, "Visible text here"
+        )
+        children = list(target)
+        # Each tail gets its word + original leading whitespace preserved
+        assert children[0].tail == "Visible"   # "Visible" → leading="" + word="Visible"
+        assert children[1].tail == " text"     # " text" → leading=" " + word="text"
+        assert children[2].tail == " here"     # " here" → leading=" " + word="here"
+        # Inline markers preserved (XML-decoded by parser)
+        assert children[0].text == "<run1>"
+        assert children[1].text == "</run1>"
+        assert children[2].text == "<tab/>"
+        # All words present in combined text
+        full = "".join(target.itertext())
+        for word in ("Visible", "text", "here"):
+            assert word in full
+
+    def test_no_double_space_between_adjacent_positions(self):
+        """Trailing whitespace in source.text + leading whitespace in
+        next child's tail must not double the separator between them
+        (common when DOCX runs are fragmented at whitespace boundaries)."""
+        source = _make_source('First <x id="1"/> last')
+        target = copy.deepcopy(source)
+        source.text = "First "
+        target.text = "First "
+        # source.text = "First " (trailing space), x.tail = " last" (leading space)
+        # Without fix: "First " + chunk1 + " " + chunk2 = double space
+        # With fix: prev_had_trailing_ws strips leading from tail
+        OkapiService._set_target_with_inline_codes(source, target, "Первый последний")
+
+        text = target.text or ""
+        child = list(target)[0]
+        tail = child.tail or ""
+
+        assert "  " not in text + tail, f"Double whitespace found: text={text!r} tail={tail!r}"
+        assert "Первый" in text
+        assert "последний" in tail.strip()
+
 
 # ===================================================================
 # XliffUnit dataclass

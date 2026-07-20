@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 # ── Centralized constants ──────────────────────────────────────────────
 MAX_UPLOAD_SIZE_BYTES: int = int(os.getenv("MAX_UPLOAD_SIZE", str(128 * 1024 * 1024)))
-JOB_TTL_SECONDS: int = int(os.getenv("JOB_TTL_SECONDS", "3600"))
-JOB_MAX_TTL_SECONDS: int = int(os.getenv("JOB_MAX_TTL_SECONDS", "3600"))
+JOB_TTL_SECONDS: int = int(os.getenv("JOB_TTL_SECONDS", "86400"))
+JOB_MAX_TTL_SECONDS: int = int(os.getenv("JOB_MAX_TTL_SECONDS", "86400"))
 TIKAL_TIMEOUT_SECONDS: int = int(os.getenv("TIKAL_TIMEOUT", "300"))
 CLEANUP_INTERVAL_SECONDS: int = int(os.getenv("CLEANUP_INTERVAL", "1800"))
 DELIVERY_RATIO_THRESHOLD: float = float(os.getenv("DELIVERY_RATIO_THRESHOLD", "0.75"))

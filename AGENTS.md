@@ -195,6 +195,39 @@ Remaining (low priority / out of scope):
 - Named glossaries (CRUD with collections)
 - User preferences (auth-based)
 
+### XLIFF save — water-fill inline code fix (2026-07-20)
+
+**Problem**: `_set_target_with_inline_codes()` in `okapi_service.py` distributes translated text across ALL text/tail positions in `<source>` inline codes. For Tikal-generated XLIFF, `<source>` elements contain `<ns0:bpt>`, `<ns0:ept>`, `<ns0:ph>` children whose `.text` is an inline code marker (e.g. `&lt;run1&gt;`, `&lt;/run1&gt;`, `&lt;tags1/&gt;`) — NOT visible text. The water-fill algorithm treated these markers as content positions that consume words from the translation, while the actual visible text (in the elements' `.tail`) received 0 words.
+
+**Loss rate**: ~38.5% of characters were silently dropped in the XLIFF save step alone (before Tikal merge).
+
+**Fix**: `okapi_service.py` — skip adding `.text` positions for `bpt`, `ept`, `ph` elements. Their `.text` is preserved (copied to target) but does NOT participate in word distribution. Visible text in `.tail` continues to be distributed normally.
+
+**Verification**: Identity round-trip test (original text → save as translation → merge) confirmed: loss dropped from 33.8% to 0.9%. All tests pass.
+
+**Files**: `file_translator/infrastructure/translators/okapi_service.py:418-428`
+
+### JSON unwrapped list recovery (2026-07-20)
+
+**Problem**: LLM sometimes returns translation objects without the `{"translations": [...]}` wrapper — either as a comma-separated list of top-level objects (`{}, {}`) or a single unwrapped object (`{"id": "p_0", "text": "..."}`). After `_fix_json_syntax` inserts commas between `}{`, the result is still invalid JSON (no outer `[ ]`).
+
+**Fix** (2 places in `openai_provider.py`):
+1. After `_fix_json_syntax` fails — try wrapping content in `{"translations": [...]}`.
+2. After successful `json.loads` — if `translations` key is missing but `id`+`text` present, wrap as single-element translations array.
+
+**Files**: `file_translator/infrastructure/providers/openai_provider.py`
+
+### `_simple_plain_text` — placeholder tree walk fix (2026-07-20)
+
+**Problem**: `_simple_plain_text()` serialized XML to string and used regex `<[^>]+>` to strip tags. The `.text` of `<bpt>`/`<ept>` contains escaped inline code markup (`&lt;hyperlink1&gt;`), which:
+1. Survives the regex (no real `<` character — `&lt;` is an entity)
+2. After `html.unescape()` becomes literal `<hyperlink1>`
+3. Ends up in `source_text` sent to LLM as if it were document content
+
+**Fix**: `_simple_plain_text()` now walks the element tree instead of using regex. `_PLACEHOLDER_TAGS = {"bpt", "ept", "ph", "it"}` are detected by local tag name; their `.text` (inline code markers, not visible text) is skipped. Only `.tail` of placeholder tags (visible content) is included.
+
+**Files**: `file_translator/infrastructure/translators/okapi_service.py:_simple_plain_text`, `okapi_service.py:_PLACEHOLDER_TAGS`
+
 ## Still to do
 - PDF, DXF/DWG translators (deferred)
 - `new_collection_name` stub in import — table creation not implemented (requires CREATE TABLE LIKE + ACL update)
