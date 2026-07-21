@@ -1371,6 +1371,9 @@ async def download_job_result(
         raise HTTPException(status_code=400, detail=f"Задача не завершена (статус: {job.status.value})")
     output_path = Path(job.output_file_path)
     if not output_path.exists():
+        # Stale job — temp dir was cleaned up but Redis record remained
+        logger.info(f"Stale completed job {job_id}: output file not found, cleaning up Redis record")
+        await translation_service.job_manager.delete_job(job_id)
         raise HTTPException(status_code=404, detail="Переведённый файл не найден на сервере")
 
     # Delete the entire temp directory after serving the file

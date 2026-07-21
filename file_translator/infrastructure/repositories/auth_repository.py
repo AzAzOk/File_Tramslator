@@ -116,7 +116,7 @@ class MongoSessionRepository:
         return token
 
     async def consume_refresh_token(self, token: str) -> dict[str, Any] | None:
-        doc = await self._refresh_tokens.find_one_and_delete({"token": token})
+        doc = await self._refresh_tokens.find_one({"token": token})
         return doc
 
     async def cleanup_expired_refresh_tokens(self) -> int:

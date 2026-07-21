@@ -259,37 +259,48 @@ class OpenAITranslationProvider(TranslationProvider):
                                 f"by wrapping unwrapped object list in translations array"
                             )
                         except json.JSONDecodeError:
-                            # Try to extract valid JSON prefix (handles truncation)
-                            fixed = self._try_extract_valid_json(content)
-                            if fixed is not None:
-                                recovered = json.loads(fixed)
-                                recovered_count = len(recovered.get("translations", []))
-                                expected_count = len(batch.text_units)
-                                if recovered_count < expected_count:
-                                    logger.warning(
-                                        f"Recovered truncated JSON for batch {batch.sequence_id}: "
-                                        f"{recovered_count}/{expected_count} units — "
-                                        f"LLM response was truncated, "
-                                        f"missing {expected_count - recovered_count} unit(s)"
-                                    )
-                                else:
-                                    logger.warning(
-                                        f"Recovered truncated JSON for batch {batch.sequence_id} "
-                                        f"({recovered_count} units) by trimming trailing garbage"
-                                    )
-                                content = fixed
-                                parsed_json = json.loads(content)
-                            elif len(batch.text_units) > 1:
+                            # Fix missing commas between key-value pairs within objects
+                            # e.g. {"id":"1" "text":"..."} -> {"id":"1", "text":"..."}
+                            content = self._fix_missing_value_key_commas(content)
+                            try:
+                                wrapped = '{"translations": [' + content + ']}'
+                                parsed_json = json.loads(wrapped)
                                 logger.warning(
-                                    f"JSON parse failed for batch {batch.sequence_id} "
-                                    f"({len(batch.text_units)} units), splitting and retrying..."
+                                    f"Recovered JSON for batch {batch.sequence_id} "
+                                    f"by fixing missing value-key commas"
                                 )
-                                return await self._translate_with_split(batch_data, _split_depth + 1)
-                            else:
-                                snippet = content[:300] if content else "<empty>"
-                                raise TranslationError(
-                                    reason=f"Invalid JSON response (single unit): {str(e)} | snippet: {snippet}"
-                                ) from e
+                            except json.JSONDecodeError:
+                                # Try to extract valid JSON prefix (handles truncation)
+                                fixed = self._try_extract_valid_json(content)
+                                if fixed is not None:
+                                    recovered = json.loads(fixed)
+                                    recovered_count = len(recovered.get("translations", []))
+                                    expected_count = len(batch.text_units)
+                                    if recovered_count < expected_count:
+                                        logger.warning(
+                                            f"Recovered truncated JSON for batch {batch.sequence_id}: "
+                                            f"{recovered_count}/{expected_count} units — "
+                                            f"LLM response was truncated, "
+                                            f"missing {expected_count - recovered_count} unit(s)"
+                                        )
+                                    else:
+                                        logger.warning(
+                                            f"Recovered truncated JSON for batch {batch.sequence_id} "
+                                            f"({recovered_count} units) by trimming trailing garbage"
+                                        )
+                                    content = fixed
+                                    parsed_json = json.loads(content)
+                                elif len(batch.text_units) > 1:
+                                    logger.warning(
+                                        f"JSON parse failed for batch {batch.sequence_id} "
+                                        f"({len(batch.text_units)} units), splitting and retrying..."
+                                    )
+                                    return await self._translate_with_split(batch_data, _split_depth + 1)
+                                else:
+                                    snippet = content[:300] if content else "<empty>"
+                                    raise TranslationError(
+                                        reason=f"Invalid JSON response (single unit): {str(e)} | snippet: {snippet}"
+                                    ) from e
                 
                 # Handle unwrapped single translation object
                 # e.g. {"id": "p_0", "text": "..."} instead of {"translations": [...]}
@@ -678,6 +689,18 @@ class OpenAITranslationProvider(TranslationProvider):
                 end = content.rfind('}', 0, end)
         
         return None
+    
+    def _fix_missing_value_key_commas(self, json_str: str) -> str:
+        """Fix missing commas between string value and next key inside objects.
+        
+        LLM sometimes returns: {"id":"1" "text":"..."} instead of {"id":"1", "text":"..."}
+        This adds the missing comma between a closing quote and an adjacent quoted key.
+        """
+        # Match closing quote of value, whitespace, then quoted key name + colon
+        # Keys are always "id" or "text" in translation response format
+        # Safe because \\\" (escaped quote) is \\" not bare ", so won't match inside values
+        json_str = re.sub(r'"\s+"(id|text)\s*":', r'", "\1":', json_str)
+        return json_str
     
     def _escape_for_prompt(self, text: str) -> str:
         """Escape special characters for prompt formatting."""
