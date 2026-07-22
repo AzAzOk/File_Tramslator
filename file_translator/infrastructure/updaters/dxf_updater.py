@@ -8,6 +8,7 @@ from pathlib import Path
 from file_translator.domain.document_model import Document, TranslationStatus
 from file_translator.domain.interfaces import IUpdater
 from file_translator.infrastructure.backends.ezdxf_backend import EzdxfBackend
+from file_translator.infrastructure.classifiers.cad_token_protector import CadTokenProtector
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,8 @@ class DxfUpdater(IUpdater):
         """Persist the translated DXF to *output_path*.
 
         Opens the original DXF, applies all entity translations, and
-        saves.
+        saves. CadTokenProtector placeholders are decoded back to
+        MTEXT format codes before writing to the DXF.
         """
         source_path = Path(document.metadata.get("file_path", ""))
         if not source_path.exists():
@@ -46,13 +48,17 @@ class DxfUpdater(IUpdater):
             )
 
         dxf_doc = self._backend.open(source_path)
+        protector = CadTokenProtector()
 
-        # Build a lookup: handle → translated_text
+        # Build a lookup: handle → translated_text (decoded)
         handle_map: dict[str, str] = {}
         for entity in document.entities:
             if entity.translated_text:
+                decoded = protector.decode(
+                    entity.translated_text, entity.protected_tokens
+                )
                 for h in entity.handles:
-                    handle_map[h] = entity.translated_text
+                    handle_map[h] = decoded
 
         # Walk the DXF and apply translations by handle
         applied = 0

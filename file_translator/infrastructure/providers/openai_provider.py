@@ -657,9 +657,10 @@ class OpenAITranslationProvider(TranslationProvider):
         """Fix common JSON syntax issues produced by LLM output.
         
         Handles:
-        - Missing commas between array/object items: `}{` -> `},{`
-        - Trailing commas before `]` or `}`  (common LLM issue)
-        - Trailing comma after last `}` in array
+        - Missing commas between array/object items: ``}{`` -> ``},{``
+        - Trailing commas before ``]`` or ``}``  (common LLM issue)
+        - Trailing comma after last ``}`` in array
+        - Invalid escape sequences (e.g. from MTEXT format codes)
         """
         # 1. Missing comma between closing and opening braces in arrays
         #    e.g., {"id":"1"}{"id":"2"} -> {"id":"1"},{"id":"2"}
@@ -670,7 +671,26 @@ class OpenAITranslationProvider(TranslationProvider):
         json_str = re.sub(r',\s*]', r']', json_str)
         json_str = re.sub(r',\s*}', r'}', json_str)
         
+        # 3. Sanitize invalid escape sequences — replace lone backslash
+        #    (not part of valid JSON escapes: " \\ \/ b f n r t uXXXX)
+        #    with double backslash so json.loads doesn't choke.
+        json_str = self._sanitize_invalid_escapes(json_str)
+        
         return json_str
+    
+    @staticmethod
+    def _sanitize_invalid_escapes(text: str) -> str:
+        """Replace invalid JSON escape sequences with escaped backslash.
+        
+        Valid JSON escapes: \\", \\\\, \\/, \\b, \\f, \\n, \\r, \\t, \\uXXXX.
+        Everything else (e.g. \\H, \\P from MTEXT format codes) gets the
+        backslash doubled so json.loads doesn't raise.
+        """
+        return re.sub(
+            r'\\(?!["\\/bfnrtu])',
+            r'\\\\',
+            text,
+        )
     
     def _try_extract_valid_json(self, content: str) -> str | None:
         """Find the longest valid JSON prefix in potentially truncated content.

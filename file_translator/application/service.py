@@ -422,8 +422,29 @@ class TranslationService:
                         filename=filename,
                     )
                          
-                except (ModelUnavailableError, TranslationError) as e:
-                    logger.error(f"Batch {i + 1} translation failed: {e}")
+                except TranslationError as e:
+                    # Don't fail entire job because of one bad batch —
+                    # log it, keep the untranslated units as-is, and
+                    # continue with remaining batches.  This protects
+                    # large files (2600+ batches) from losing hours of
+                    # work due to a single problematic text unit.
+                    failed_unit_ids = [u.id for u in batch.text_units]
+                    logger.warning(
+                        f"Batch {i + 1}/{total_batches} failed after retries "
+                        f"({len(failed_unit_ids)} units will keep original text): {e}"
+                    )
+                    await self.journal_service.log_warning(
+                        JournalStage.TRANSLATION,
+                        f"Batch {i + 1}/{total_batches} failed: {e} — "
+                        f"{len(failed_unit_ids)} units untranslated",
+                        filename=filename,
+                        details={"failed_batch": i + 1, "failed_units": failed_unit_ids},
+                    )
+                    # Skip this batch — its units won't appear in all_translations
+                    # and will retain their original_text during document assembly.
+                
+                except ModelUnavailableError as e:
+                    logger.error(f"Batch {i + 1} translation failed (model unavailable): {e}")
                     await self.journal_service.log_error(
                         JournalStage.TRANSLATION,
                         f"Batch {i + 1}/{total_batches} failed: {e}",

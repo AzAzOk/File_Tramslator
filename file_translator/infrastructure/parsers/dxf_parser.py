@@ -35,6 +35,7 @@ from file_translator.domain.dxf_models import (
 )
 from file_translator.domain.interfaces import IParser
 from file_translator.infrastructure.backends.ezdxf_backend import EzdxfBackend
+from file_translator.infrastructure.classifiers.cad_token_protector import CadTokenProtector
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +150,7 @@ class DxfDocumentParser(IParser):
         entities: list[TranslatableEntity] = []
         seen_texts: dict[str, TranslatableEntity] = {}
         counter = 0
+        protector = CadTokenProtector()
 
         for raw_entity, source in self._backend.iter_entities(dxf_doc):
             text = self._backend.get_text(raw_entity)
@@ -159,9 +161,12 @@ class DxfDocumentParser(IParser):
             layer = self._backend.get_layer(raw_entity)
             dxf_type = raw_entity.dxftype() if hasattr(raw_entity, "dxftype") else "TEXT"
 
+            # Encode MTEXT format codes before batching
+            encoded_text, tokens = protector.encode(text, entity_id=handle)
+
             # Dedup identical text → group handles
-            if text in seen_texts:
-                seen_texts[text].handles.append(handle)
+            if encoded_text in seen_texts:
+                seen_texts[encoded_text].handles.append(handle)
                 continue
 
             entity_id = f"dxf_{counter}"
@@ -172,8 +177,9 @@ class DxfDocumentParser(IParser):
                 id=entity_id,
                 handles=[handle],
                 type=et,
-                text=text,
+                text=encoded_text,
                 translation_status=TranslationStatus.PENDING,
+                protected_tokens=tokens,
                 metadata={
                     "dxf_type": dxf_type,
                     "layer": layer,
@@ -182,7 +188,7 @@ class DxfDocumentParser(IParser):
                 },
             )
             entities.append(te)
-            seen_texts[text] = te
+            seen_texts[encoded_text] = te
 
         return Document(
             schema_version="1.0",

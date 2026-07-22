@@ -28,6 +28,7 @@ from file_translator.domain.models import (
     DocumentMetadata,
     TextUnit,
 )
+from file_translator.infrastructure.classifiers.cad_token_protector import CadTokenProtector
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +119,9 @@ class DxfTranslator(DocumentTranslator):
                   translations: dict[str, str]) -> dict[str, Any]:
         """Apply translations back to the DXF document.
         
+        Decodes CadTokenProtector placeholders before writing translated text
+        back to entities, restoring MTEXT format codes (\\P, \\H, {\\f...}).
+        
         Args:
             extracted_data: Original extract() output (includes dxf_document).
             translations: Map of unit_id -> translated_text.
@@ -127,13 +131,28 @@ class DxfTranslator(DocumentTranslator):
             logger.warning("No DXF document in extracted_data, cannot translate")
             return {"dxf_document": None}
         
+        protector = CadTokenProtector()
+        
+        # Build token lookup from TextUnits stored in extracted_data
+        text_units = extracted_data.get("text_units", [])
+        tokens_by_id: dict[str, list[dict[str, str]]] = {}
+        for unit in text_units:
+            cad_tokens = unit.metadata.get("cad_tokens", [])
+            if cad_tokens:
+                tokens_by_id[unit.id] = cad_tokens
+        
         for entity in doc.get_all_texts():
             entity_id = entity.id
             if entity_id in translations:
+                translated = translations[entity_id]
+                # Decode cad tokens if they were encoded during extraction
+                cad_tokens = tokens_by_id.get(entity_id, [])
+                if cad_tokens:
+                    translated = protector.decode(translated, cad_tokens)
                 if isinstance(entity, DxfTextEntity):
-                    entity.translated_text = translations[entity_id]
+                    entity.translated_text = translated
                 elif isinstance(entity, DxfDimension):
-                    entity.translated_text = translations[entity_id]
+                    entity.translated_text = translated
         
         return extracted_data
     
@@ -165,32 +184,42 @@ class DxfTranslator(DocumentTranslator):
             )
         
     def _build_text_units(self, doc: DxfDocument) -> list[TextUnit]:
-        """Convert DXF entities into TextUnit list for translation pipeline."""
+        """Convert DXF entities into TextUnit list for translation pipeline.
+        
+        MTEXT format codes (\\P, \\H, {\\f...} etc.) are encoded via
+        CadTokenProtector before batching so they don't break LLM JSON output.
+        Tokens are stored in TextUnit.metadata["cad_tokens"] for decode after translation.
+        """
+        protector = CadTokenProtector()
         text_units = []
         
         for entity in doc.get_text_entities():
+            encoded_text, tokens = protector.encode(entity.original_text, entity_id=entity.id)
             unit = TextUnit(
                 id=entity.id,
-                original_text=entity.original_text,
+                original_text=encoded_text,
                 context=f"dxf_layer:{entity.layer}",
                 metadata={
                     "x": entity.position.x,
                     "y": entity.position.y,
                     "z": entity.position.z,
                     "entity_type": entity.entity_type.value if isinstance(entity.entity_type, DxfEntityType) else str(entity.entity_type),
+                    "cad_tokens": tokens,
                 },
             )
             text_units.append(unit)
         
         for dim in doc.get_dimensions():
+            encoded_text, tokens = protector.encode(dim.original_text, entity_id=dim.id)
             unit = TextUnit(
                 id=dim.id,
-                original_text=dim.original_text,
+                original_text=encoded_text,
                 context=f"dxf_dimension:{dim.measurement}",
                 metadata={
                     "x": dim.text_position.x,
                     "y": dim.text_position.y,
                     "entity_type": "DIMENSION",
+                    "cad_tokens": tokens,
                 },
             )
             text_units.append(unit)

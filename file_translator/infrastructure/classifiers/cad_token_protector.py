@@ -21,10 +21,10 @@ import re
 from typing import Any
 
 _FMT_PATTERN = re.compile(
-    r"\\[PASHLQWT_OL~]|"
     r"\\S[^;]*;|"
-    r"\\[HWCQF](\d+(\.\d+)?)?;|"
-    r"\{[^}]*\}"
+    r"\\[HWCQF](\d+(\.\d+)?x?;)?|"
+    r"\{[^}]*\}|"
+    r"\\[PASHLQWT_OL~]"
 )
 
 _COUNTER_ATTR = "_token_counter"
