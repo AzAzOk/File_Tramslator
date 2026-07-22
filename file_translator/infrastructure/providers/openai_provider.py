@@ -126,10 +126,22 @@ class OpenAITranslationProvider(TranslationProvider):
         if _split_depth > MAX_SPLIT_DEPTH:
             batch_id = batch_data.get('batch', None)
             seq = batch_id.sequence_id if batch_id else "?"
-            logger.error(f"Split depth limit exceeded for batch after {MAX_SPLIT_DEPTH} retries")
+            last_err = batch_data.get('_last_parse_error', None)
+            last_content = batch_data.get('_last_parse_content', "")
+            snippet = last_content[:300] if last_content else "<not captured>"
+            err_detail = f" | last error: {last_err}" if last_err else ""
+            logger.error(
+                f"Split depth limit exceeded for batch after {MAX_SPLIT_DEPTH} retries. "
+                f"Last content snippet: {snippet}{err_detail}"
+            )
             raise TranslationError(
                 batch_id=str(seq),
-                reason=f"Превышен лимит глубины разделения ({MAX_SPLIT_DEPTH}) — ответ модели не укладывается в лимиты",
+                reason=(
+                    f"Превышен лимит глубины разделения ({MAX_SPLIT_DEPTH}) — "
+                    f"ответ модели не укладывается в лимиты. "
+                    f"Последняя ошибка: {last_err or 'N/A'}. "
+                    f"Фрагмент ответа: {snippet}"
+                ),
             )
         
         batch: TranslationBatch = batch_data['batch']
@@ -249,25 +261,22 @@ class OpenAITranslationProvider(TranslationProvider):
                     try:
                         parsed_json = json.loads(content)
                     except json.JSONDecodeError as e:
-                        # Try wrapping as translations array — handles LLM returning
-                        # unwrapped object list like {"id":"1","text":"..."},{"id":"2","text":"..."}
+                        # Apply ALL fixes before trying any recovery:
+                        # 1. Fix missing value-key commas (e.g. {"id":"1" "text":"..."})
+                        content = self._fix_missing_value_key_commas(content)
+                        # 2. Re-run brace-comma fix after comma insertion (may change structure)
+                        content = self._fix_json_syntax(content)
                         try:
-                            wrapped = '{"translations": [' + content + ']}'
-                            parsed_json = json.loads(wrapped)
-                            logger.warning(
-                                f"Recovered JSON for batch {batch.sequence_id} "
-                                f"by wrapping unwrapped object list in translations array"
-                            )
+                            parsed_json = json.loads(content)
                         except json.JSONDecodeError:
-                            # Fix missing commas between key-value pairs within objects
-                            # e.g. {"id":"1" "text":"..."} -> {"id":"1", "text":"..."}
-                            content = self._fix_missing_value_key_commas(content)
+                            # Try wrapping as translations array — handles LLM returning
+                            # unwrapped object list like {"id":"1","text":"..."},{"id":"2","text":"..."}
                             try:
                                 wrapped = '{"translations": [' + content + ']}'
                                 parsed_json = json.loads(wrapped)
                                 logger.warning(
                                     f"Recovered JSON for batch {batch.sequence_id} "
-                                    f"by fixing missing value-key commas"
+                                    f"by wrapping unwrapped object list in translations array"
                                 )
                             except json.JSONDecodeError:
                                 # Try to extract valid JSON prefix (handles truncation)
@@ -295,6 +304,8 @@ class OpenAITranslationProvider(TranslationProvider):
                                         f"JSON parse failed for batch {batch.sequence_id} "
                                         f"({len(batch.text_units)} units), splitting and retrying..."
                                     )
+                                    batch_data['_last_parse_error'] = str(e)
+                                    batch_data['_last_parse_content'] = content
                                     return await self._translate_with_split(batch_data, _split_depth + 1)
                                 else:
                                     snippet = content[:300] if content else "<empty>"
@@ -697,9 +708,8 @@ class OpenAITranslationProvider(TranslationProvider):
         This adds the missing comma between a closing quote and an adjacent quoted key.
         """
         # Match closing quote of value, whitespace, then quoted key name + colon
-        # Keys are always "id" or "text" in translation response format
-        # Safe because \\\" (escaped quote) is \\" not bare ", so won't match inside values
-        json_str = re.sub(r'"\s+"(id|text)\s*":', r'", "\1":', json_str)
+        # Handles any key name, not just "id"/"text" — LLM may add unexpected fields
+        json_str = re.sub(r'"\s+"(\w+)"\s*":', r'", "\1":', json_str)
         return json_str
     
     def _escape_for_prompt(self, text: str) -> str:
