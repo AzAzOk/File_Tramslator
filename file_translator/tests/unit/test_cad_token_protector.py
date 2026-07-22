@@ -45,11 +45,32 @@ class TestFmtPattern:
         assert m is not None
         assert m.group(0) == "{\\fArial|b0|i0;Text}"
 
-    def test_alignment(self):
-        """\\A1; — only \\A matches (A not in [HWCQF]), 1; stays as text."""
-        m = _FMT_PATTERN.search("\\A1;")
+    def test_alignment_bare(self):
+        """\\A alone (no digit) must still match."""
+        m = _FMT_PATTERN.search("text\\Arest")
         assert m is not None
         assert m.group(0) == "\\A"
+
+    def test_alignment_with_digit(self):
+        """\\A1; must match as one token — digit+; consumed together."""
+        m = _FMT_PATTERN.search("\\A1;")
+        assert m is not None
+        assert m.group(0) == "\\A1;"
+
+    def test_alignment_all_values(self):
+        """\\A0;, \\A1;, \\A2; — each must match fully."""
+        for value in ("\\A0;", "\\A1;", "\\A2;"):
+            m = _FMT_PATTERN.search(value)
+            assert m is not None, f"{value} did not match"
+            assert m.group(0) == value, f"{value} matched as {m.group(0)}"
+
+    def test_alignment_with_following_text(self):
+        """\\A1;Отметка must not leak the digit/; into surrounding text."""
+        m = _FMT_PATTERN.search("\\A1;Отметка")
+        assert m is not None
+        assert m.group(0) == "\\A1;"
+        # 'Отметка' is not consumed
+        assert m.end() == 4  # after '\\A1;'
 
     def test_width_factor(self):
         m = _FMT_PATTERN.search("\\W0.75;")
@@ -152,3 +173,35 @@ class TestEncodeDecode:
         restored = self.protector.decode(encoded, tokens)
         assert restored == text
         assert restored.count("\\P") == 2
+
+    def test_alignment_with_following_text(self):
+        """\\A1;Отметка -0.150 — entire \\A1; goes into one placeholder, no leakage."""
+        text = "\\A1;Отметка -0.150"
+        encoded, tokens = self.protector.encode(text)
+        assert "\\A" not in encoded
+        # '1;' must NOT leak into encoded text
+        assert "1;" not in encoded
+        assert len(tokens) == 1
+        assert tokens[0]["original"] == "\\A1;"
+        restored = self.protector.decode(encoded, tokens)
+        assert restored == text
+
+    def test_alignment_all_values_round_trip(self):
+        """\\A0;, \\A1;, \\A2; — encode/decode round-trip for each."""
+        for value in ("\\A0;", "\\A1;", "\\A2;"):
+            text = f"{value}Отметка"
+            encoded, tokens = self.protector.encode(text)
+            assert "\\A" not in encoded
+            assert len(tokens) == 1
+            restored = self.protector.decode(encoded, tokens)
+            assert restored == text, f"Round-trip failed for {value}"
+
+    def test_alignment_in_complex_mtext(self):
+        """\\A1; inside a complex MTEXT string — all codes protected."""
+        text = "Header\\P\\A1;Отметка -0.150\\H0.7x; (отн.)"
+        encoded, tokens = self.protector.encode(text)
+        assert "\\A" not in encoded
+        assert "\\P" not in encoded
+        assert "\\H" not in encoded
+        restored = self.protector.decode(encoded, tokens)
+        assert restored == text

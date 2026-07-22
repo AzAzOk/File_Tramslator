@@ -22,9 +22,9 @@ from typing import Any
 
 _FMT_PATTERN = re.compile(
     r"\\S[^;]*;|"
-    r"\\[HWCQF](\d+(\.\d+)?x?;)?|"
+    r"\\[AHWCQF](\d+(\.\d+)?x?;)?|"
     r"\{[^}]*\}|"
-    r"\\[PASHLQWT_OL~]"
+    r"\\[PSHLQWT_OL~]"
 )
 
 _COUNTER_ATTR = "_token_counter"
