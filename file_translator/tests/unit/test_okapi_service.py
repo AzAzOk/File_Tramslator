@@ -400,6 +400,32 @@ class TestSetTargetWithInlineCodes:
         assert "Первый" in text
         assert "последний" in tail.strip()
 
+    def test_it_tag_does_not_consume_translation_words(self):
+        """<it> tags (inline text markers) must NOT consume words in the
+        water-fill distribution — same as bpt/ept/ph. Their .text contains
+        inline code markup, not visible text."""
+        source = _make_source(
+            '<it id="1">open</it>'
+            'Start'
+            '<it id="2">close</it>'
+            ' end'
+        )
+        target = copy.deepcopy(source)
+        OkapiService._set_target_with_inline_codes(
+            source, target, "Начало конец"
+        )
+        children = list(target)
+        # <it> .text preserved but does NOT consume words
+        assert children[0].text == "open"
+        assert children[1].text == "close"
+        # Visible text goes to tails
+        assert "Начало" in (children[0].tail or "")
+        assert "конец" in (children[1].tail or "")
+        # All translated words present
+        full = "".join(target.itertext())
+        for word in ("Начало", "конец"):
+            assert word in full
+
 
 # ===================================================================
 # XliffUnit dataclass

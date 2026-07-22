@@ -435,7 +435,7 @@ class OkapiService:
 
         for src_child, tgt_child in zip(source_elem, target_elem):
             local_tag = src_child.tag.split('}')[-1] if '}' in src_child.tag else src_child.tag
-            is_inline_marker = local_tag in ('bpt', 'ept', 'ph')
+            is_inline_marker = local_tag in OkapiService._PLACEHOLDER_TAGS
             if src_child.text is not None:
                 tgt_child.text = src_child.text
                 # bpt/ept/ph: .text is an inline code marker (e.g. "<run1>"),
@@ -501,6 +501,9 @@ class OkapiService:
                 if n > 0:
                     # Shouldn't happen, but be safe
                     word_idx += n
+                # Update prev_had_trailing_ws based on this whitespace position's
+                # original text so the next content position sees the correct state
+                prev_had_trailing_ws = bool(orig_text and orig_text[-1] in (' ', '\t'))
                 continue
 
             chunk = " ".join(words[word_idx:word_idx + n]) if n > 0 else ""

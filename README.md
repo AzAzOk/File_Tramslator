@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # File Translator v2.0.0
 
 Industrial-grade document translation system powered by LLM (OpenAI-compatible API).
@@ -200,6 +199,3 @@ Uses optional `lingua-language-detector` (ML-based, 170MB) or character-set heur
 ## License
 
 MIT
-=======
-# File_Tramslator
->>>>>>> b666d6476c7e4d0b6bfc50ad893cdd28820a6938
