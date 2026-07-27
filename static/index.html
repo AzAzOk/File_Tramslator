@@ -1068,12 +1068,12 @@ function updateFileCardProgress(fileKey, status, pct, stage, errorText, queuePos
         card.querySelector('.flex.items-center.justify-between').appendChild(dlBtn);
       }
     }
-    // Убираем карточку через 24 часа (синхронизировано с TTL сервера)
+    // Убираем карточку через 7 дней (синхронизировано с TTL сервера)
     setTimeout(() => {
       card.style.opacity = '0';
       card.style.transition = 'opacity 0.4s';
       setTimeout(() => card.remove(), 400);
-    }, 86400000);
+    }, 604800000);
   } else if (status === 'failed' || status === 'cancelled') {
     fill.classList.add('error');
     statusText.textContent = `❌ ${status === 'cancelled' ? 'Отменён' : 'Ошибка'}: ${friendlyError(errorText)}`;
@@ -1481,11 +1481,11 @@ window.downloadJob = async function(jobId) {
   }
 };
 
-// Очистка завершённых jobs через 24ч (синхронизировано с серверным TTL JOB_TTL_SECONDS=86400)
+// Очистка завершённых jobs через 7 дней (синхронизировано с серверным TTL JOB_TTL_SECONDS=604800)
 setInterval(() => {
   const now = Date.now();
   for (const jobId in activeJobs) {
-    if (activeJobs[jobId].completedAt && (now - activeJobs[jobId].completedAt > 86400000)) {
+    if (activeJobs[jobId].completedAt && (now - activeJobs[jobId].completedAt > 604800000)) {
       delete activeJobs[jobId];
     }
   }
@@ -1498,11 +1498,11 @@ function updateActiveJobsPanel() {
   const badge = document.getElementById('activeJobsBadge');
   const now = Date.now();
 
-  // Показываем только незавершённые + завершённые (до очистки памяти через 24ч)
+  // Показываем только незавершённые + завершённые (до очистки памяти через 7 дней)
   const visibleIds = Object.keys(activeJobs).filter(id => {
     const job = activeJobs[id];
     if (!job.completedAt) return true;
-    return (now - job.completedAt) < 86400000; // 24ч, синхронизировано с серверным TTL
+    return (now - job.completedAt) < 604800000; // 7 дней, синхронизировано с серверным TTL
   });
 
   if (visibleIds.length === 0) {
