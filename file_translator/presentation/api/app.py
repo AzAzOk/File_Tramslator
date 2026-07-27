@@ -225,11 +225,11 @@ user_job_queue = UserJobQueue(process_func=_run_translation_job)
 # --- Periodic cleanup: temp dirs (1h TTL) + expired tokens ---
 
 async def _cleanup_orphaned_temp_dirs(interval: int = CLEANUP_INTERVAL_SECONDS) -> None:
-    """Background task that deletes ALL translator_* temp dirs older than 1 hour
+    """Background task that deletes ALL translator_* temp dirs older than 7 days
     and removes stale terminal jobs from Redis.
 
     Filesystem scan catches everything — error, completed, downloaded, orphaned.
-    Redis TTL (JOB_TTL_SECONDS=3600) handles job record cleanup automatically;
+    Redis TTL (JOB_TTL_SECONDS=604800) handles job record cleanup automatically;
     this is a safety net for edge cases.
     """
     while True:
@@ -240,7 +240,7 @@ async def _cleanup_orphaned_temp_dirs(interval: int = CLEANUP_INTERVAL_SECONDS) 
             cutoff_ts = now.timestamp() - JOB_TTL_SECONDS  # configurable TTL
 
             # ── Filesystem scan: delete ALL translator_*/docx_okapi_*/tikal_*
-            #    dirs older than 1 hour. Covers every temp dir the system creates. ──
+            #    dirs older than 7 days. Covers every temp dir the system creates. ──
             temp_root = Path(tempfile.gettempdir())
             cleaned_dirs = 0
             for prefix_pattern in ("translator_*", "docx_okapi_*", "tikal_*"):
@@ -254,9 +254,9 @@ async def _cleanup_orphaned_temp_dirs(interval: int = CLEANUP_INTERVAL_SECONDS) 
                         pass
 
             if cleaned_dirs:
-                logger.info(f"Periodic cleanup removed {cleaned_dirs} temp dir(s) older than 1 hour")
+                logger.info(f"Periodic cleanup removed {cleaned_dirs} temp dir(s) older than 7 days")
 
-            # ── Redis safety net: delete jobs older than 1h from creation ──
+            # ── Redis safety net: delete jobs older than TTL from creation ──
             try:
                 jobs = await translation_service.job_manager.get_recent_jobs(limit=500)
                 cleaned_jobs = 0

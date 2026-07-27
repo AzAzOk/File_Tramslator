@@ -80,7 +80,9 @@ class DxfParser:
 
     def _parse_to_dxf_doc(self, path: Path) -> DxfDocument:
         dxf_doc = self._backend.open(path)
-        doc = DxfDocument(file_path=str(path.absolute()))
+        abs_path = str(path.absolute())
+        actual_dxf = str(self._backend._temp_files.get(abs_path, abs_path))
+        doc = DxfDocument(file_path=abs_path, source_dxf_path=actual_dxf)
         doc.format_version = dxf_doc.dxfversion
 
         text_entities: list[DxfTextEntity] = []
@@ -190,10 +192,13 @@ class DxfDocumentParser(IParser):
             entities.append(te)
             seen_texts[encoded_text] = te
 
+        abs_path = str(path.absolute())
+        actual_dxf = str(self._backend._temp_files.get(abs_path, abs_path))
         return Document(
             schema_version="1.0",
             metadata={
-                "file_path": str(path.absolute()),
+                "file_path": abs_path,
+                "source_dxf_path": actual_dxf,
                 "format": "DXF",
                 "format_version": dxf_doc.dxfversion,
                 "entity_count": len(entities),

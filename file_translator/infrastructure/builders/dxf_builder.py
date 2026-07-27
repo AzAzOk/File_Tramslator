@@ -35,7 +35,7 @@ class DxfBuilder:
     def build(self, document: DxfDocument, output_path: str | Path) -> str:
         """Write the translated DXF document."""
         path = Path(output_path)
-        source_path = Path(document.file_path)
+        source_path = Path(document.source_dxf_path or document.file_path)
 
         if not source_path.exists():
             raise DxfBuildError(f"Source DXF not found: {source_path}")

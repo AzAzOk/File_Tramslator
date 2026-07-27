@@ -130,7 +130,7 @@ class RedisJobRepository(JobRepository):
             await conn.zrem(self._INDEX_KEY, *stale_ids)
 
     # ── TTL logic ──────────────────────────────────────────────
-    # _MAX_TTL (30 days) is a safety net applied on every write so
+    # _MAX_TTL (7 days) is a safety net applied on every write so
     # orphaned jobs never live forever even if the server crashes.
     # _TERMINAL_TTL (7 days) replaces it once the job reaches a
     # terminal state so completed/failed/cancelled jobs are cleaned
