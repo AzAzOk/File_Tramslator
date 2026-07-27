@@ -41,7 +41,10 @@ class DxfUpdater(IUpdater):
         saves. CadTokenProtector placeholders are decoded back to
         MTEXT format codes before writing to the DXF.
         """
-        source_path = Path(document.metadata.get("file_path", ""))
+        source_path = Path(
+            document.metadata.get("source_dxf_path", "")
+            or document.metadata.get("file_path", "")
+        )
         if not source_path.exists():
             raise FileNotFoundError(
                 f"Original DXF not found: {source_path}"

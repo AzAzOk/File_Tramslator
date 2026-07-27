@@ -162,15 +162,26 @@ class EzdxfBackend(CADBackend):
         path = Path(path)
         if path.suffix.lower() == ".dwg":
             tmp_dxf = path.with_suffix(".dxf")
-            doc.saveas(str(tmp_dxf))
+            try:
+                doc.saveas(str(tmp_dxf))
+            except Exception as exc:
+                logger.error("Failed to save DXF intermediate for %s: %s", path.name, exc)
+                raise
+            if not tmp_dxf.exists():
+                logger.error("DXF intermediate not created for %s", path.name)
+                raise FileNotFoundError(f"doc.saveas() did not produce {tmp_dxf}")
+            dxf_size_mb = tmp_dxf.stat().st_size / (1024 * 1024)
+            logger.info(
+                "Intermediate DXF saved: %s (%.1f MB) — converting to DWG",
+                tmp_dxf.name, dxf_size_mb,
+            )
             from file_translator.infrastructure.services.oda_converter_service import dxf_to_dwg
             if not dxf_to_dwg(tmp_dxf, path):
                 logger.warning(
-                    "DWG conversion failed for %s — falling back to DXF output", path,
+                    "DWG conversion failed for %s (%.1f MB DXF) — falling back to DXF output",
+                    path.name, dxf_size_mb,
                 )
-                fallback_path = path.with_suffix(".dxf")
-                tmp_dxf.rename(fallback_path)
-                return fallback_path          # ← реальный путь
+                return tmp_dxf
             tmp_dxf.unlink(missing_ok=True)
             return path
         doc.saveas(str(path))

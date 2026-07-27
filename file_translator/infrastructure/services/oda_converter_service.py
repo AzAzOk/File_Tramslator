@@ -183,8 +183,17 @@ def _run_converter(
         return False
 
 
-def dwg_to_dxf(dwg_path: Path, timeout: int = 120) -> Path | None:
-    """Convert .dwg to temp .dxf. Returns temp path or None."""
+def dwg_to_dxf(dwg_path: Path, timeout: int = 0) -> Path | None:
+    """Convert .dwg to temp .dxf. Returns temp path or None.
+
+    *timeout*: seconds. 0 (default) = auto-scale: 120 s base + 1 s per 4 MB of input.
+    """
+    if timeout <= 0:
+        size_mb = dwg_path.stat().st_size / (1024 * 1024) if dwg_path.exists() else 0
+        timeout = max(300, int(120 + size_mb / 4))
+        logger.info(
+            "dwg_to_dxf auto-timeout: %.0f MB -> %ds", size_mb, timeout,
+        )
     if _ODA_CONVERTER_URL:
         tmp_dir = Path(tempfile.mkdtemp(prefix="oda_dwg_to_dxf_"))
         dxf_path = tmp_dir / f"{dwg_path.stem}.dxf"
@@ -219,16 +228,52 @@ def dwg_to_dxf(dwg_path: Path, timeout: int = 120) -> Path | None:
     return None
 
 
-def dxf_to_dwg(dxf_path: Path, output_dwg: Path, timeout: int = 120) -> bool:
-    """Convert .dxf to .dwg. Returns True on success."""
+def dxf_to_dwg(dxf_path: Path, output_dwg: Path, timeout: int = 0) -> bool:
+    """Convert .dxf to .dwg. Returns True on success.
+
+    Uses separate temp directories for input and output so that ODAFileConverter
+    only processes the single DXF file (not every file in the original directory).
+
+    *timeout*: seconds. 0 (default) = auto-scale: 120 s base + 1 s per 4 MB of input.
+    """
+    if timeout <= 0:
+        size_mb = dxf_path.stat().st_size / (1024 * 1024) if dxf_path.exists() else 0
+        timeout = max(300, int(120 + size_mb / 4))
+        logger.info(
+            "dxf_to_dwg auto-timeout: %.0f MB -> %ds", size_mb, timeout,
+        )
     if _ODA_CONVERTER_URL:
         return _convert_via_http(dxf_path, output_dwg, "DWG", timeout)
 
-    return _run_converter(
-        input_dir=dxf_path.parent.resolve(),
-        output_dir=output_dwg.parent.resolve(),
-        output_format="DWG",
-        version=_ODA_VERSION,
-        input_name=dxf_path.name,
-        timeout=timeout,
-    )
+    tmp_input = Path(tempfile.mkdtemp(prefix="oda_dxf_to_dwg_in_"))
+    tmp_output = Path(tempfile.mkdtemp(prefix="oda_dxf_to_dwg_out_"))
+    try:
+        staged = tmp_input / dxf_path.name
+        shutil.copy2(dxf_path, staged)
+
+        success = _run_converter(
+            input_dir=tmp_input.resolve(),
+            output_dir=tmp_output.resolve(),
+            output_format="DWG",
+            version=_ODA_VERSION,
+            input_name=dxf_path.name,
+            timeout=timeout,
+        )
+
+        expected = tmp_output / (dxf_path.stem + ".dwg")
+        if success and expected.exists():
+            output_dwg.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(expected), str(output_dwg))
+            logger.info("DXF -> DWG: %s -> %s", dxf_path.name, output_dwg)
+            return True
+        if expected.exists():
+            logger.warning("DXF -> DWG returned non-zero but output exists: %s", expected)
+            output_dwg.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(expected), str(output_dwg))
+            return True
+
+        logger.error("DXF -> DWG failed for %s", dxf_path)
+        return False
+    finally:
+        shutil.rmtree(tmp_input, ignore_errors=True)
+        shutil.rmtree(tmp_output, ignore_errors=True)

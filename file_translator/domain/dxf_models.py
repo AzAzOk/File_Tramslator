@@ -110,6 +110,7 @@ class DxfDocument:
     """Complete DXF document representation for translation."""
     
     file_path: str = ""
+    source_dxf_path: str = ""
     format_version: str = "AC1027"  # AutoCAD 2013
     layers: list[DxfLayer] = field(default_factory=list)
     blocks: list[DxfBlock] = field(default_factory=list)
