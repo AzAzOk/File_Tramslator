@@ -385,6 +385,7 @@ class TranslationService:
             # Step 7: Translate each batch
             all_translations: dict[str, str] = {}
             total_batches = len(batches)
+            provider = await self.get_provider()
             # Diagnostic: accumulate original texts of all failed units for aggregate MTEXT stats
             _all_failed_original_texts: list[str] = []
             _diagnostic_path = Path(f"/app/logs/failed_units_diagnostic_{job_id}.jsonl")
@@ -413,10 +414,23 @@ class TranslationService:
                         "glossary_entries": glossary_entries,
                     }
                     
+                    # Log what we're sending to LLM
+                    for u in batch.text_units:
+                        preview = u.original_text[:50]
+                        if len(u.original_text) > 50:
+                            preview += "..."
+                        logger.info("→ LLM input %s: %r", u.id, preview)
+
                     # Call LLM provider
-                    provider = await self.get_provider()
                     translations = await provider.translate_batch(batch_data)
                     
+                    # Log what came back from LLM
+                    for t in translations:
+                        preview = t["text"][:50]
+                        if len(t["text"]) > 50:
+                            preview += "..."
+                        logger.info("← LLM output %s: %r", t["id"], preview)
+
                     # Store results
                     for translation in translations:
                         all_translations[translation["id"]] = translation["text"]
@@ -497,7 +511,123 @@ class TranslationService:
                 # Small delay between batches to avoid overwhelming the model
                 if i < len(batches) - 1:
                     await asyncio.sleep(0.5)
-            
+
+            # ── Gap-fill: retry missing units after main pass ──
+            missing_units = [u for u in translatable_units if u.id not in all_translations]
+            if missing_units:
+                from file_translator.infrastructure.config import (
+                    GAP_FILL_MAX_ROUNDS,
+                    GAP_FILL_BATCH_SIZE,
+                )
+
+                # ── Task 4: Diagnostic for partial batch loss ──
+                try:
+                    _diag_lines: list[str] = []
+                    for u in missing_units:
+                        txt = getattr(u, 'original_text', '') or ''
+                        rec = {
+                            "job_id": job_id,
+                            "unit_id": u.id,
+                            "length": len(txt),
+                            "has_backslash": '\\' in txt,
+                            "has_mtext_code": _has_mtext_codes(txt),
+                            "preview": txt[:80],
+                            "loss_type": "partial_batch_loss",
+                        }
+                        _diag_lines.append(json.dumps(rec, ensure_ascii=False))
+                    _diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(_diagnostic_path, 'a', encoding='utf-8') as _f:
+                        _f.write('\n'.join(_diag_lines) + '\n')
+                    logger.info(
+                        "Wrote %d partial-loss diagnostic lines to %s",
+                        len(_diag_lines), _diagnostic_path,
+                    )
+                except Exception as diag_exc:
+                    logger.debug("Partial-loss diagnostic write failed: %s", diag_exc)
+
+                logger.warning(
+                    f"Partial-loss diagnostic: {len(missing_units)} units missing from "
+                    f"successful batches. MTEXT codes present in "
+                    f"{sum(1 for u in missing_units if _has_mtext_codes(u.original_text))}/"
+                    f"{len(missing_units)} of them. IDs: {[u.id for u in missing_units]}"
+                )
+
+                # ── Task 1: Gap-fill retry rounds ──
+                for round_num in range(1, GAP_FILL_MAX_ROUNDS + 1):
+                    if not missing_units:
+                        break
+
+                    logger.warning(
+                        f"Gap-fill round {round_num}/{GAP_FILL_MAX_ROUNDS}: retrying "
+                        f"{len(missing_units)} units missed during the main pass "
+                        f"({[u.id for u in missing_units]})"
+                    )
+
+                    mini_batches = self._create_batches(
+                        missing_units, GAP_FILL_BATCH_SIZE,
+                        source_lang, target_lang,
+                        translation_style, translation_mode,
+                        request.use_glossary,
+                    )
+
+                    still_missing: list[TextUnit] = []
+                    for mini_batch in mini_batches:
+                        if await self.job_manager.is_cancelled(job_id):
+                            logger.warning(
+                                f"Job {job_id} cancelled during gap-fill, stopping"
+                            )
+                            break
+
+                        mini_batch_data = {
+                            "batch": mini_batch,
+                            "source_language": source_lang,
+                            "target_language": target_lang,
+                            "translation_style": translation_style,
+                            "translation_mode": translation_mode,
+                            "use_glossary": request.use_glossary,
+                            "glossary_entries": glossary_entries,
+                        }
+                        try:
+                            # Log gap-fill input
+                            for u in mini_batch.text_units:
+                                preview = u.original_text[:50]
+                                if len(u.original_text) > 50:
+                                    preview += "..."
+                                logger.info("→ GAP-FILL LLM input %s: %r", u.id, preview)
+
+                            translations = await provider.translate_batch(
+                                mini_batch_data
+                            )
+
+                            # Log gap-fill output
+                            for t in translations:
+                                preview = t["text"][:50]
+                                if len(t["text"]) > 50:
+                                    preview += "..."
+                                logger.info("← GAP-FILL LLM output %s: %r", t["id"], preview)
+
+                            for t in translations:
+                                all_translations[t["id"]] = t["text"]
+                            for u in mini_batch.text_units:
+                                if u.id not in all_translations:
+                                    still_missing.append(u)
+                        except TranslationError as e:
+                            logger.warning(
+                                f"Gap-fill mini-batch failed: {e}"
+                            )
+                            still_missing.extend(
+                                u for u in mini_batch.text_units
+                                if u.id not in all_translations
+                            )
+
+                    missing_units = still_missing
+
+                if missing_units:
+                    logger.warning(
+                        f"Gap-fill exhausted after {GAP_FILL_MAX_ROUNDS} rounds: "
+                        f"{len(missing_units)} units still untranslated, keeping "
+                        f"original text: {[u.id for u in missing_units]}"
+                    )
 
             # Verify translation completeness
             expected_units = len(translatable_units)

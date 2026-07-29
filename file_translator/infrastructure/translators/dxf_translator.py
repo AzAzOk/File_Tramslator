@@ -189,12 +189,23 @@ class DxfTranslator(DocumentTranslator):
         MTEXT format codes (\\P, \\H, {\\f...} etc.) are encoded via
         CadTokenProtector before batching so they don't break LLM JSON output.
         Tokens are stored in TextUnit.metadata["cad_tokens"] for decode after translation.
+        Entities where all content is formatting codes only (no real text)
+        are skipped entirely — they never reach the LLM.
         """
         protector = CadTokenProtector()
         text_units = []
+        skipped_placeholder_only = 0
         
         for entity in doc.get_text_entities():
             encoded_text, tokens = protector.encode(entity.original_text, entity_id=entity.id)
+            if not protector.has_translatable_content(encoded_text):
+                skipped_placeholder_only += 1
+                continue
+            preview = entity.original_text[:50]
+            if len(entity.original_text) > 50:
+                preview += "..."
+            logger.info("Extracted TEXT entity %s (layer=%s): %r",
+                        entity.id, entity.layer, preview)
             unit = TextUnit(
                 id=entity.id,
                 original_text=encoded_text,
@@ -211,6 +222,14 @@ class DxfTranslator(DocumentTranslator):
         
         for dim in doc.get_dimensions():
             encoded_text, tokens = protector.encode(dim.original_text, entity_id=dim.id)
+            if not protector.has_translatable_content(encoded_text):
+                skipped_placeholder_only += 1
+                continue
+            preview = dim.original_text[:50]
+            if len(dim.original_text) > 50:
+                preview += "..."
+            logger.info("Extracted DIMENSION entity %s (measurement=%s): %r",
+                        dim.id, dim.measurement, preview)
             unit = TextUnit(
                 id=dim.id,
                 original_text=encoded_text,
@@ -223,5 +242,9 @@ class DxfTranslator(DocumentTranslator):
                 },
             )
             text_units.append(unit)
+        
+        if skipped_placeholder_only:
+            logger.info(f"Skipped {skipped_placeholder_only} entities with no translatable "
+                        f"content (formatting codes only) — kept as-is, never sent to LLM")
         
         return text_units

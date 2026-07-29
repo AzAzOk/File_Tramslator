@@ -18,6 +18,8 @@ CLEANUP_INTERVAL_SECONDS: int = int(os.getenv("CLEANUP_INTERVAL", "1800"))
 DELIVERY_RATIO_THRESHOLD: float = float(os.getenv("DELIVERY_RATIO_THRESHOLD", "0.75"))
 MAX_SPLIT_DEPTH: int = int(os.getenv("MAX_SPLIT_DEPTH", "3"))
 STALE_JOB_TTL_SECONDS: int = int(os.getenv("STALE_JOB_TTL", "300"))
+GAP_FILL_MAX_ROUNDS: int = int(os.getenv("GAP_FILL_MAX_ROUNDS", "2"))
+GAP_FILL_BATCH_SIZE: int = int(os.getenv("GAP_FILL_BATCH_SIZE", "10"))
 # ───────────────────────────────────────────────────────────────────────
 
 
