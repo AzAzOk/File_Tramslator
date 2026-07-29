@@ -243,8 +243,7 @@ class DocxTranslator(DocumentTranslator):
     def _post_process_docx(docx_path: Path) -> None:
         """Apply all post-processing fixes to a merged DOCX archive in one pass.
 
-        Combines two fixes that were previously applied separately (and thus
-        required reading/writing the ZIP archive twice):
+        Combines fixes that were previously applied separately:
 
         1. **CJK font fix**: Replace SimSun and other CJK fonts with Arial in
            XML files. Tikal's merge injects w:eastAsia="SimSun" for translated
@@ -254,7 +253,12 @@ class DocxTranslator(DocumentTranslator):
            table rows. Translated text can expand and overflow fixed-height rows,
            hiding the content. Using "atLeast" allows rows to grow as needed.
 
-        Both fixes use regex matching on XML files only (and .rels). The archive
+        3. **TOC updateFields fix**: Set `<w:updateFields w:val="true"/>` in
+           `word/settings.xml`. Okapi/Tikal intentionally skips Table of Contents
+           content (cached field result). This flag tells Word to recalculate the
+           TOC from the already-translated headings on open.
+
+        All fixes use regex matching on XML files only (and .rels). The archive
         is read once, modified files updated in memory, then written back
         atomically via temp file + os.replace.
 
@@ -278,6 +282,12 @@ class DocxTranslator(DocumentTranslator):
         # Table row height fix pattern (exact → atLeast)
         _HRULE_RE = re.compile(rb'([\w.-]+):hRule\s*=\s*"exact"')
 
+        # Word settings: force field update on open (TOC rebuild)
+        # Matches existing <w:updateFields w:val="false"/> (change to "true")
+        _UPDATEFIELDS_SET_RE = re.compile(
+            rb'(<[\w.-]+:updateFields\s+[\w.-]+:val\s*=\s*)"false"\s*/>'
+        )
+
         try:
             with zf.ZipFile(str(docx_path), "r") as z:
                 archive = {name: z.read(name) for name in z.namelist()}
@@ -287,6 +297,7 @@ class DocxTranslator(DocumentTranslator):
 
         cjk_total = 0
         hrule_total = 0
+        updatefields_total = 0
         modified_files = 0
 
         for name, data in archive.items():
@@ -316,16 +327,35 @@ class DocxTranslator(DocumentTranslator):
                 file_changes = True
                 hrule_total += hrule_count
 
+            # Apply TOC updateFields fix (word/settings.xml only)
+            if low == "word/settings.xml":
+                if _UPDATEFIELDS_SET_RE.search(new_data):
+                    new_data = _UPDATEFIELDS_SET_RE.sub(
+                        rb'\1"true"/>',
+                        new_data,
+                    )
+                    file_changes = True
+                    updatefields_total += 1
+                elif b"updateFields" not in new_data:
+                    new_data = re.sub(
+                        rb'(</[\w.-]+:settings>)',
+                        rb'<w:updateFields w:val="true"/> \1',
+                        new_data,
+                    )
+                    file_changes = True
+                    updatefields_total += 1
+
             if file_changes:
                 archive[name] = new_data
                 modified_files += 1
                 logger.debug(
-                    f"  {name}: CJK={cjk_count}, height={hrule_count} fix(es)"
+                    f"  {name}: CJK={cjk_count}, "                    
+                    f"height={hrule_count}, "
+                    f"updateFields={updatefields_total}"
                 )
 
         # Write back atomically only if changes were made
-        total_changes = cjk_total + hrule_total
-        if total_changes:
+        if modified_files:
             tmp = docx_path.with_suffix(docx_path.suffix + ".tmp")
             try:
                 with zf.ZipFile(str(tmp), "w", zf.ZIP_DEFLATED) as z:
@@ -334,7 +364,8 @@ class DocxTranslator(DocumentTranslator):
                 os.replace(str(tmp), str(docx_path))
                 logger.info(
                     f"DOCX post-process: {docx_path.name} "
-                    f"(CJK={cjk_total}, height={hrule_total}, files={modified_files})"
+                    f"(CJK={cjk_total}, height={hrule_total}, "
+                    f"updateFields={updatefields_total}, files={modified_files})"
                 )
             except Exception as e:
                 logger.warning(f"DOCX post-process: failed to write archive: {e}")
