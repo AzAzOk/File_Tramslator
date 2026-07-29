@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
+import time
+import traceback
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -162,14 +165,67 @@ class EzdxfBackend(CADBackend):
         path = Path(path)
         if path.suffix.lower() == ".dwg":
             tmp_dxf = path.with_suffix(".dxf")
+
+            # ── Diagnostic: pre-saveas snapshot ──
+            try:
+                _disk_before = shutil.disk_usage(str(tmp_dxf.parent))
+                _disk_free_mb = _disk_before.free / (1024 * 1024)
+                _disk_total_mb = _disk_before.total / (1024 * 1024)
+                _disk_pct = (_disk_before.free / _disk_before.total * 100) if _disk_before.total else 0
+            except Exception:
+                _disk_free_mb = _disk_total_mb = _disk_pct = -1
+            try:
+                _entity_count = len(list(doc.entitydb))
+            except Exception:
+                _entity_count = -1
+            _saveas_start = time.time()
+            logger.info(
+                "Attempting doc.saveas() for %s: entity_count=%d, "
+                "disk_free=%.0f MB (%.1f%% of %.0f MB)",
+                tmp_dxf.name, _entity_count,
+                _disk_free_mb, _disk_pct, _disk_total_mb,
+            )
+            # ── end pre-saveas snapshot ──
+
             try:
                 doc.saveas(str(tmp_dxf))
-            except Exception as exc:
-                logger.error("Failed to save DXF intermediate for %s: %s", path.name, exc)
+            except BaseException as exc:
+                _saveas_elapsed = time.time() - _saveas_start
+                logger.error(
+                    "doc.saveas() failed for %s after %.1fs: %s (%s)\n%s",
+                    tmp_dxf.name, _saveas_elapsed,
+                    exc, type(exc).__name__, traceback.format_exc(),
+                )
                 raise
+            _saveas_elapsed = time.time() - _saveas_start
+
+            # ── Diagnostic: post-saveas snapshot ──
+            try:
+                _disk_after = shutil.disk_usage(str(tmp_dxf.parent))
+                _disk_after_free_mb = _disk_after.free / (1024 * 1024)
+                _disk_delta_mb = _disk_free_mb - _disk_after_free_mb if _disk_free_mb >= 0 else -1
+            except Exception:
+                _disk_after_free_mb = _disk_delta_mb = -1
+            logger.info(
+                "doc.saveas() completed for %s in %.1fs: "
+                "disk_used_delta=%.0f MB, disk_free_after=%.0f MB",
+                tmp_dxf.name, _saveas_elapsed,
+                _disk_delta_mb, _disk_after_free_mb,
+            )
+            # ── end post-saveas snapshot ──
+
             if not tmp_dxf.exists():
-                logger.error("DXF intermediate not created for %s", path.name)
-                raise FileNotFoundError(f"doc.saveas() did not produce {tmp_dxf}")
+                logger.error(
+                    "DXF intermediate not created for %s: "
+                    "entity_count=%d, saveas_time=%.1fs, "
+                    "disk_free_before=%.0f MB, disk_free_after=%.0f MB",
+                    path.name, _entity_count, _saveas_elapsed,
+                    _disk_free_mb, _disk_after_free_mb,
+                )
+                raise FileNotFoundError(
+                    f"doc.saveas() did not produce {tmp_dxf} "
+                    f"(entities={_entity_count}, saveas_time={_saveas_elapsed:.1f}s)"
+                )
             dxf_size_mb = tmp_dxf.stat().st_size / (1024 * 1024)
             logger.info(
                 "Intermediate DXF saved: %s (%.1f MB) — converting to DWG",

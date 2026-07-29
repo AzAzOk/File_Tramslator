@@ -59,6 +59,8 @@ tmp/
 temp/
 *.tmp
 *.temp
+temp_*.txt
+temp_*.log
 
 # Environment
 .env
