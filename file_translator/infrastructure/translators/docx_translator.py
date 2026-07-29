@@ -186,11 +186,7 @@ class DocxTranslator(DocumentTranslator):
             f"Applying {len(translations)} translations to XLIFF: {xliff_path.name}"
         )
 
-        try:
-            self._okapi.save_xliff(xliff_path, translations)
-        except OkapiServiceError as e:
-            logger.error(f"Failed to update XLIFF: {e}")
-            extracted_data.setdefault("errors", []).append(str(e))
+        self._okapi.save_xliff(xliff_path, translations)
 
         extracted_data["translations_applied"] = len(translations)
         return extracted_data

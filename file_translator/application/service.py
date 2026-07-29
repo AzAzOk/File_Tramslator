@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -31,6 +33,14 @@ from file_translator.domain.validation import ValidationError, ValidationReport,
 from file_translator.infrastructure.language_validator import detect_language as _detect_lang, LINGUA_AVAILABLE as _LINGUA_AVAILABLE
 
 logger = logging.getLogger(__name__)
+
+# Diagnostic: MTEXT AutoCAD format codes pattern for Task A hypothesis testing
+_MTEXT_PATTERN = re.compile(r'\\[A-Za-z]|%%[cdpo]|\\U\+[0-9A-Fa-f]{4}')
+
+
+def _has_mtext_codes(text: str) -> bool:
+    """Return True if text contains AutoCAD MTEXT format codes."""
+    return bool(_MTEXT_PATTERN.search(text))
 
 
 class TranslationService:
@@ -375,6 +385,9 @@ class TranslationService:
             # Step 7: Translate each batch
             all_translations: dict[str, str] = {}
             total_batches = len(batches)
+            # Diagnostic: accumulate original texts of all failed units for aggregate MTEXT stats
+            _all_failed_original_texts: list[str] = []
+            _diagnostic_path = Path(f"/app/logs/failed_units_diagnostic_{job_id}.jsonl")
             
             for i, batch in enumerate(batches):
                 try:
@@ -440,6 +453,35 @@ class TranslationService:
                         filename=filename,
                         details={"failed_batch": i + 1, "failed_units": failed_unit_ids},
                     )
+
+                    # ── Diagnostic: per-unit MTEXT analysis for failed batch ──
+                    try:
+                        _diag_lines: list[str] = []
+                        for u in batch.text_units:
+                            txt = getattr(u, 'original_text', '') or ''
+                            has_bs = '\\' in txt
+                            has_mtext = _has_mtext_codes(txt)
+                            _all_failed_original_texts.append(txt)
+                            rec = {
+                                "job_id": job_id,
+                                "batch": i + 1,
+                                "unit_id": u.id,
+                                "length": len(txt),
+                                "has_backslash": has_bs,
+                                "has_mtext_code": has_mtext,
+                                "preview": txt[:80],
+                            }
+                            _diag_lines.append(json.dumps(rec, ensure_ascii=False))
+                        _diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
+                        with open(_diagnostic_path, 'a', encoding='utf-8') as _f:
+                            _f.write('\n'.join(_diag_lines) + '\n')
+                        logger.info(
+                            "Wrote %d diagnostic lines to %s", len(_diag_lines), _diagnostic_path
+                        )
+                    except Exception as diag_exc:
+                        logger.debug("MTEXT diagnostic write failed: %s", diag_exc)
+                    # ── end diagnostic ──
+
                     # Skip this batch — its units won't appear in all_translations
                     # and will retain their original_text during document assembly.
                 
@@ -474,7 +516,21 @@ class TranslationService:
                 )
             else:
                 logger.info(f"Translation complete: all {translated_count}/{expected_units} units translated")
-            
+
+            # ── Diagnostic: aggregate MTEXT pattern statistics ──
+            if _all_failed_original_texts or translatable_units:
+                all_texts = [getattr(u, 'original_text', '') or '' for u in translatable_units]
+                all_mtext_count = sum(1 for t in all_texts if _has_mtext_codes(t))
+                all_mtext_pct = (all_mtext_count / len(all_texts) * 100) if all_texts else 0.0
+                failed_mtext_count = sum(1 for t in _all_failed_original_texts if _has_mtext_codes(t))
+                failed_mtext_pct = (failed_mtext_count / len(_all_failed_original_texts) * 100) if _all_failed_original_texts else 0.0
+                logger.warning(
+                    f"MTEXT diagnostic: {all_mtext_pct:.1f}% of ALL units ({all_mtext_count}/{len(all_texts)}) "
+                    f"contain MTEXT codes; "
+                    f"{failed_mtext_pct:.1f}% of FAILED units ({failed_mtext_count}/{len(_all_failed_original_texts)}) "
+                    f"contain MTEXT codes"
+                )
+            # ── end aggregate diagnostic ──
             # Check cancellation before applying translations back to document
             if await self.job_manager.is_cancelled(job_id):
                 logger.warning(f"Job {job_id} cancelled after translation, before applying")

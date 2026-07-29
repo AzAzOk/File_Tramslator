@@ -51,6 +51,7 @@ logs/
 Thumbs.db
 
 # Docker
+docker-compose.yml
 docker-compose.override.yml
 
 # Temporary files
@@ -58,6 +59,8 @@ tmp/
 temp/
 *.tmp
 *.temp
+temp_*.txt
+temp_*.log
 
 # Environment
 .env
