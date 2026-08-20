@@ -180,6 +180,38 @@ class TranslationService:
                 self._format_registry = registry
         return self._format_registry
 
+    async def _register_temp_dirs(self, job_id: str | None, extracted_data: dict[str, Any]) -> None:
+        """Record every temp dir a job uses into job.metadata so the periodic
+        orphan sweep never deletes a long-running job's working files.
+
+        Collects the translator-internal ``temp_dir`` (docx_okapi_*, xlsx_*)
+        and the DWG→DXF ODA conversion dir (re-opened at save time).
+        """
+        if not job_id:
+            return
+        try:
+            temp_dirs: list[str] = []
+            td = extracted_data.get("temp_dir")
+            if td:
+                temp_dirs.append(str(td))
+            doc = extracted_data.get("dxf_document")
+            if doc is not None and getattr(doc, "source_dxf_path", ""):
+                src = Path(doc.source_dxf_path).parent
+                if src.name.startswith(("oda_", "docx_okapi_", "xlsx_")):
+                    temp_dirs.append(str(src))
+            if not temp_dirs:
+                return
+            job = await self.job_manager.get_job(job_id)
+            if not job:
+                return
+            existing = set(job.metadata.get("temp_dirs", []) or [])
+            merged = sorted(set(temp_dirs) | existing)
+            if merged != list(existing):
+                job.metadata["temp_dirs"] = merged
+                await self.job_manager.repository.update(job)
+        except Exception as e:
+            logger.debug(f"Could not register temp dirs for job {job_id}: {e}")
+
     async def translate_document(self, file_path: str, request: TranslationRequestSchema,
                                   job_id: str | None = None) -> TranslationResponseSchema:
         """Translate a document from source to target language.
@@ -291,7 +323,12 @@ class TranslationService:
                 source_lang=source_lang.value,
                 target_lang=target_lang.value,
             )
-            
+
+            # Register translator-internal temp dirs in job metadata so the
+            # periodic orphan sweep never deletes a long-running job's working
+            # files (docx_okapi_*, xlsx_*, oda_dwg_to_dxf_*) mid-translation.
+            await self._register_temp_dirs(job_id, extracted_data)
+
             text_units = extracted_data.get("text_units", [])
             
             if not text_units:

@@ -198,12 +198,20 @@ async def _run_translation_job(job_id: str, file_path: str, request: Translation
         else:
             errors = "; ".join(result.errors) if result.errors else "Unknown error"
             logger.error(f"Background job {job_id} failed: {errors}")
-            _cleanup_temp_dir(temp_dir, job_id)
+            job = await translation_service.job_manager.get_job(job_id)
+            if job:
+                _cleanup_job_temp_dirs(job, job_id)
+            else:
+                _cleanup_temp_dir(temp_dir, job_id)
     except Exception as e:
         logger.error(f"Background job {job_id} crashed: {e}", exc_info=True)
         try:
             await translation_service.job_manager.fail_job(job_id, str(e))
-            _cleanup_temp_dir(temp_dir, job_id)
+            job = await translation_service.job_manager.get_job(job_id)
+            if job:
+                _cleanup_job_temp_dirs(job, job_id)
+            else:
+                _cleanup_temp_dir(temp_dir, job_id)
         except Exception:
             pass
 
@@ -218,6 +226,27 @@ def _cleanup_temp_dir(temp_dir: str, job_id: str) -> None:
         logger.warning(f"Failed to cleanup temp_dir {temp_dir} for job {job_id}: {cleanup_error}")
 
 
+def _cleanup_job_temp_dirs(job: Any, job_id: str, fallback: str | None = None) -> None:
+    """Remove the main temp dir plus any translator-internal temp dirs
+    (docx_okapi_*, xlsx_*, oda_*) recorded in job metadata.
+
+    ``fallback`` is used when the job record carries no temp dir metadata
+    (legacy jobs, synchronous path) — e.g. ``output_path.parent``.
+    """
+    seen: set[str] = set()
+    dirs: list[str] = []
+    td = job.metadata.get("temp_dir", "") if job else ""
+    if td:
+        dirs.append(td)
+    dirs.extend(job.metadata.get("temp_dirs", []) or [] if job else [])
+    if fallback:
+        dirs.append(fallback)
+    for d in dirs:
+        if d and str(d) not in seen:
+            seen.add(str(d))
+            _cleanup_temp_dir(str(d), job_id)
+
+
 # Per-user job queue for sequential processing
 user_job_queue = UserJobQueue(process_func=_run_translation_job)
 
@@ -225,11 +254,14 @@ user_job_queue = UserJobQueue(process_func=_run_translation_job)
 # --- Periodic cleanup: temp dirs (1h TTL) + expired tokens ---
 
 async def _cleanup_orphaned_temp_dirs(interval: int = CLEANUP_INTERVAL_SECONDS) -> None:
-    """Background task that deletes ALL translator_* temp dirs older than 7 days
-    and removes stale terminal jobs from Redis.
+    """Background task that deletes orphaned temp dirs and stale terminal jobs.
+
+    Only temp dirs NOT referenced by any job still in Redis (active or recent)
+    and older than JOB_TTL_SECONDS are removed. This protects long-running
+    jobs (>1 day) from having their working directory swept mid-translation.
 
     Filesystem scan catches everything — error, completed, downloaded, orphaned.
-    Redis TTL (JOB_TTL_SECONDS=604800) handles job record cleanup automatically;
+    Redis TTL (JOB_TTL_SECONDS) handles job record cleanup automatically;
     this is a safety net for edge cases.
     """
     while True:
@@ -239,13 +271,32 @@ async def _cleanup_orphaned_temp_dirs(interval: int = CLEANUP_INTERVAL_SECONDS) 
             now = datetime.now(timezone.utc)
             cutoff_ts = now.timestamp() - JOB_TTL_SECONDS  # configurable TTL
 
-            # ── Filesystem scan: delete ALL translator_*/docx_okapi_*/tikal_*
-            #    dirs older than 7 days. Covers every temp dir the system creates. ──
+            # ── Collect temp dirs referenced by jobs still present in Redis.
+            #    Any dir belonging to an existing job record is protected —
+            #    active (pending/running) jobs must never be swept, and
+            #    terminal-but-not-yet-downloaded jobs keep their output. ──
+            protected_dirs: set[str] = set()
+            try:
+                recent = await translation_service.job_manager.get_recent_jobs(limit=500)
+                active = await translation_service.job_manager.get_active_jobs()
+                for job in [*recent, *active]:
+                    td = job.metadata.get("temp_dir")
+                    if td:
+                        protected_dirs.add(str(Path(td)))
+                    for extra in job.metadata.get("temp_dirs", []) or []:
+                        protected_dirs.add(str(Path(extra)))
+            except Exception as e:
+                logger.debug(f"Could not load job temp dirs for cleanup protection: {e}")
+
+            # ── Filesystem scan: delete orphaned translator_*/docx_okapi_*/tikal_*/oda_*
+            #    dirs older than JOB_TTL_SECONDS and not referenced by any job record. ──
             temp_root = Path(tempfile.gettempdir())
             cleaned_dirs = 0
-            for prefix_pattern in ("translator_*", "docx_okapi_*", "tikal_*"):
+            for prefix_pattern in ("translator_*", "docx_okapi_*", "tikal_*", "oda_*"):
                 for d in temp_root.glob(prefix_pattern):
                     try:
+                        if str(d) in protected_dirs:
+                            continue
                         mtime = d.stat().st_mtime
                         if mtime < cutoff_ts:
                             _cleanup_temp_dir(str(d), "auto_cleanup")
@@ -254,18 +305,30 @@ async def _cleanup_orphaned_temp_dirs(interval: int = CLEANUP_INTERVAL_SECONDS) 
                         pass
 
             if cleaned_dirs:
-                logger.info(f"Periodic cleanup removed {cleaned_dirs} temp dir(s) older than 7 days")
+                logger.info(
+                    f"Periodic cleanup removed {cleaned_dirs} orphaned temp dir(s) "
+                    f"older than {int(JOB_TTL_SECONDS // 86400)} days"
+                )
 
-            # ── Redis safety net: delete jobs older than TTL from creation ──
+            # ── Redis safety net: delete only TERMINAL jobs whose TTL has elapsed.
+            #    Age is measured from when the job reached its terminal state
+            #    (completed/failed/cancelled), NOT from creation — a long-running
+            #    job (e.g. 44h DWG translation) would otherwise be deleted within
+            #    minutes of finishing, before the user can download the result.
+            #    Active (pending/running) jobs are never deleted, no matter how old. ──
             try:
                 jobs = await translation_service.job_manager.get_recent_jobs(limit=500)
                 cleaned_jobs = 0
                 for job in jobs:
-                    created = getattr(job, 'created_at', None)
-                    if created:
+                    if not job.is_terminal:
+                        continue
+                    # Use the terminal timestamp first; fall back to creation
+                    # time for legacy records that never got a completed_at.
+                    terminal_ts = getattr(job, 'completed_at', None) or getattr(job, 'created_at', None)
+                    if terminal_ts:
                         try:
-                            created_dt = datetime.fromisoformat(created)
-                            if (now - created_dt).total_seconds() > JOB_TTL_SECONDS:
+                            terminal_dt = datetime.fromisoformat(terminal_ts)
+                            if (now - terminal_dt).total_seconds() > JOB_TTL_SECONDS:
                                 await translation_service.job_manager.delete_job(job.job_id)
                                 cleaned_jobs += 1
                         except (ValueError, TypeError):
@@ -1345,10 +1408,9 @@ async def cancel_job(
     # Running jobs detect cancellation at the next safe checkpoint and clean up
     # themselves — deleting the temp dir here creates a race with extract().
     if not was_running:
-        temp_dir = job.metadata.get("temp_dir", "")
-        if temp_dir and Path(temp_dir).exists():
-            _cleanup_temp_dir(temp_dir, job_id)
-            logger.info(f"Cleaned up temp dir for cancelled job {job_id}: {temp_dir}")
+        if job.metadata.get("temp_dir") or job.metadata.get("temp_dirs"):
+            _cleanup_job_temp_dirs(job, job_id)
+            logger.info(f"Cleaned up temp dirs for cancelled job {job_id}")
     return _job_to_schema(job)
 
 
@@ -1377,10 +1439,11 @@ async def download_job_result(
         raise HTTPException(status_code=404, detail="Переведённый файл не найден на сервере")
 
     # Delete the entire temp directory after serving the file
-    temp_dir = job.metadata.get("temp_dir", str(output_path.parent))
-    background_tasks.add_task(_cleanup_temp_dir, temp_dir, job_id)
+    background_tasks.add_task(
+        _cleanup_job_temp_dirs, job, job_id, str(output_path.parent)
+    )
 
-    logger.info(f"Serving and cleaning up job {job_id}: {temp_dir}")
+    logger.info(f"Serving and cleaning up job {job_id}: {job.metadata.get('temp_dir')}")
     return FileResponse(
         path=output_path,
         filename=output_path.name,
