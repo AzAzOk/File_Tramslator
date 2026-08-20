@@ -122,6 +122,11 @@ class DxfTranslator(DocumentTranslator):
         Decodes CadTokenProtector placeholders before writing translated text
         back to entities, restoring MTEXT format codes (\\P, \\H, {\\f...}).
         
+        Handles paragraph-split entities: if ``_build_text_units`` split a large
+        entity into ``entity_id__pN`` children (via ``metadata["split_parent"]``),
+        this method merges their translations (or originals for missing ones)
+        back into a single ``\\P``-joined block and sets it on the parent entity.
+        
         Args:
             extracted_data: Original extract() output (includes dxf_document).
             translations: Map of unit_id -> translated_text.
@@ -141,11 +146,57 @@ class DxfTranslator(DocumentTranslator):
             if cad_tokens:
                 tokens_by_id[unit.id] = cad_tokens
         
+        # ── Handle split entities (paragraph-level splitting) ──
+        split_children: dict[str, list[TextUnit]] = {}
+        for unit in text_units:
+            parent = unit.metadata.get("split_parent")
+            if parent:
+                split_children.setdefault(parent, []).append(unit)
+        
+        handled_parents: set[str] = set()
+        if split_children:
+            for parent_id, children in split_children.items():
+                children.sort(key=lambda u: u.metadata.get("split_index", 0))
+                parts: list[str] = []
+                for child in children:
+                    child_id = child.id
+                    if child_id in translations:
+                        translated = translations[child_id]
+                        cad_tokens = tokens_by_id.get(child_id, [])
+                        if cad_tokens:
+                            translated = protector.decode(translated, cad_tokens)
+                        parts.append(translated)
+                    else:
+                        cad_tokens = tokens_by_id.get(child_id, [])
+                        original = child.original_text
+                        if cad_tokens:
+                            original = protector.decode(original, cad_tokens)
+                        parts.append(original)
+                        logger.info(
+                            "Split child %s missing from translations, "
+                            "using original text as fallback", child_id
+                        )
+                
+                merged = "\\P".join(parts)
+                for entity in doc.get_all_texts():
+                    if entity.id == parent_id:
+                        entity.translated_text = merged
+                        break
+                handled_parents.add(parent_id)
+            
+            logger.info(
+                "Merged %d split parent entities from %d children",
+                len(split_children),
+                sum(len(v) for v in split_children.values()),
+            )
+        
+        # ── Handle normal (non-split) entities ──
         for entity in doc.get_all_texts():
+            if entity.id in handled_parents:
+                continue
             entity_id = entity.id
             if entity_id in translations:
                 translated = translations[entity_id]
-                # Decode cad tokens if they were encoded during extraction
                 cad_tokens = tokens_by_id.get(entity_id, [])
                 if cad_tokens:
                     translated = protector.decode(translated, cad_tokens)
@@ -191,60 +242,105 @@ class DxfTranslator(DocumentTranslator):
         Tokens are stored in TextUnit.metadata["cad_tokens"] for decode after translation.
         Entities where all content is formatting codes only (no real text)
         are skipped entirely — they never reach the LLM.
+        
+        Large entities (≥3 \\P paragraphs and ≥300 chars) are split into
+        individual paragraph-level units (entity_id__pN) to improve LLM
+        translation reliability. Missing paragraphs fall back to original text.
         """
+        SPLIT_MIN_PARAGRAPHS = 3
+        SPLIT_MIN_CHARS = 300
+
         protector = CadTokenProtector()
         text_units = []
         skipped_placeholder_only = 0
-        
+        split_count = 0
+
+        def _add_unit(eid: str, original: str, layer: str, pos: tuple[float, float, float],
+                      etype: str, context: str, measurement: str | None = None) -> None:
+            nonlocal skipped_placeholder_only, split_count
+
+            para_count = original.count("\\P")
+            should_split = para_count >= SPLIT_MIN_PARAGRAPHS and len(original) >= SPLIT_MIN_CHARS
+
+            if should_split:
+                paragraphs = original.split("\\P")
+                split_count += 1
+                for i, para in enumerate(paragraphs):
+                    child_id = f"{eid}__p{i}"
+                    enc, toks = protector.encode(para, entity_id=child_id)
+                    if not protector.has_translatable_content(enc):
+                        continue
+                    preview = para[:50]
+                    if len(para) > 50:
+                        preview += "..."
+                    kind = "DIMENSION" if measurement is not None else "TEXT"
+                    logger.info("Extracted %s split child %s (layer=%s, %d/%d): %r",
+                                kind, child_id, layer, i + 1, len(paragraphs), preview)
+                    text_units.append(TextUnit(
+                        id=child_id,
+                        original_text=enc,
+                        context=context,
+                        metadata={
+                            "x": pos[0], "y": pos[1], "z": pos[2],
+                            "entity_type": etype,
+                            "cad_tokens": toks,
+                            "split_parent": eid,
+                            "split_index": i,
+                        },
+                    ))
+                return
+
+            enc, toks = protector.encode(original, entity_id=eid)
+            if not protector.has_translatable_content(enc):
+                skipped_placeholder_only += 1
+                return
+
+            preview = original[:50]
+            if len(original) > 50:
+                preview += "..."
+
+            if measurement is not None:
+                logger.info("Extracted DIMENSION entity %s (measurement=%s): %r",
+                            eid, measurement, preview)
+            else:
+                logger.info("Extracted TEXT entity %s (layer=%s): %r",
+                            eid, layer, preview)
+
+            text_units.append(TextUnit(
+                id=eid,
+                original_text=enc,
+                context=context,
+                metadata={
+                    "x": pos[0], "y": pos[1], "z": pos[2],
+                    "entity_type": etype,
+                    "cad_tokens": toks,
+                },
+            ))
+
         for entity in doc.get_text_entities():
-            encoded_text, tokens = protector.encode(entity.original_text, entity_id=entity.id)
-            if not protector.has_translatable_content(encoded_text):
-                skipped_placeholder_only += 1
-                continue
-            preview = entity.original_text[:50]
-            if len(entity.original_text) > 50:
-                preview += "..."
-            logger.info("Extracted TEXT entity %s (layer=%s): %r",
-                        entity.id, entity.layer, preview)
-            unit = TextUnit(
-                id=entity.id,
-                original_text=encoded_text,
+            etype = (entity.entity_type.value if isinstance(entity.entity_type, DxfEntityType)
+                     else str(entity.entity_type))
+            _add_unit(
+                eid=entity.id, original=entity.original_text,
+                layer=entity.layer,
+                pos=(entity.position.x, entity.position.y, entity.position.z),
+                etype=etype,
                 context=f"dxf_layer:{entity.layer}",
-                metadata={
-                    "x": entity.position.x,
-                    "y": entity.position.y,
-                    "z": entity.position.z,
-                    "entity_type": entity.entity_type.value if isinstance(entity.entity_type, DxfEntityType) else str(entity.entity_type),
-                    "cad_tokens": tokens,
-                },
             )
-            text_units.append(unit)
-        
+
         for dim in doc.get_dimensions():
-            encoded_text, tokens = protector.encode(dim.original_text, entity_id=dim.id)
-            if not protector.has_translatable_content(encoded_text):
-                skipped_placeholder_only += 1
-                continue
-            preview = dim.original_text[:50]
-            if len(dim.original_text) > 50:
-                preview += "..."
-            logger.info("Extracted DIMENSION entity %s (measurement=%s): %r",
-                        dim.id, dim.measurement, preview)
-            unit = TextUnit(
-                id=dim.id,
-                original_text=encoded_text,
+            _add_unit(
+                eid=dim.id, original=dim.original_text,
+                layer="",
+                pos=(dim.text_position.x, dim.text_position.y, 0.0),
+                etype="DIMENSION",
                 context=f"dxf_dimension:{dim.measurement}",
-                metadata={
-                    "x": dim.text_position.x,
-                    "y": dim.text_position.y,
-                    "entity_type": "DIMENSION",
-                    "cad_tokens": tokens,
-                },
+                measurement=str(dim.measurement),
             )
-            text_units.append(unit)
-        
+
+        if split_count:
+            logger.info("Split %d large entities into paragraph-level units", split_count)
         if skipped_placeholder_only:
             logger.info(f"Skipped {skipped_placeholder_only} entities with no translatable "
                         f"content (formatting codes only) — kept as-is, never sent to LLM")
-        
         return text_units
