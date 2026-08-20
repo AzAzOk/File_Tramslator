@@ -38,6 +38,7 @@ RUN dpkg -i /tmp/debs/libssl1.1_*.deb || true && \
 # Install LibreOffice and Java (Debian Trixie ships OpenJDK 21)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-writer \
+    libreoffice-calc \
     openjdk-21-jre-headless \
     wget \
     unzip \
