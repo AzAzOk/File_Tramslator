@@ -57,6 +57,7 @@ from file_translator.application.schemas import (
     ValidationReportSchema,
 )
 from file_translator.application.auth_service import AuthService
+from file_translator.application.glossary_service import DuplicateError, GlossaryError, LanguageMismatchError
 from file_translator.application.service import TranslationService
 from file_translator.application.user_queue import UserJobQueue
 from file_translator.domain.auth import Permission, RoleType
@@ -993,9 +994,15 @@ async def create_glossary_entry(
 
     username = getattr(auth.user, "username", "")
     try:
-        result = await svc.add_entry(entry, collection_id=collection_id, created_by=username)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        result = await svc.add_entry(
+            entry, collection_id=collection_id, created_by=username, force_language=entry.force_language
+        )
+    except LanguageMismatchError as exc:
+        return JSONResponse(status_code=400, content={"code": exc.code, "detail": exc.detail})
+    except DuplicateError as exc:
+        return JSONResponse(status_code=400, content={"code": exc.code, "detail": exc.detail})
+    except GlossaryError as exc:
+        return JSONResponse(status_code=400, content={"code": exc.code, "detail": exc.detail})
     await translation_service.journal_service.log_info(
         JournalStage.GLOSSARY,
         f"Glossary entry created: [{result.id}] ru={result.ru_word} / en={result.en_word}",
@@ -1147,7 +1154,7 @@ async def import_glossary(
     for row_num, ru, en, sb, ch in deduped_rows:
         try:
             entry_schema = GlossaryCreateSchema(ru_word=ru, en_word=en, sb_word=sb, ch_word=ch)
-            await svc.add_entry(entry_schema, collection_id, getattr(auth, "username", ""))
+            await svc.add_entry(entry_schema, collection_id=collection_id, created_by=getattr(auth, "username", ""))
             count += 1
         except ValidationError as exc:
             errors.append(f"Строка {row_num}: ошибка валидации — {exc.errors(include_context=False)}")
@@ -1225,9 +1232,15 @@ async def update_glossary_entry(
     auth: AuthCredentials = request.state.auth
     username = getattr(auth.user, "username", "")
     try:
-        result = await svc.update_entry(entry_data, collection_id=collection_id, updated_by=username)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        result = await svc.update_entry(
+            entry_data, collection_id=collection_id, updated_by=username, force_language=entry.force_language
+        )
+    except LanguageMismatchError as exc:
+        return JSONResponse(status_code=400, content={"code": exc.code, "detail": exc.detail})
+    except DuplicateError as exc:
+        return JSONResponse(status_code=400, content={"code": exc.code, "detail": exc.detail})
+    except GlossaryError as exc:
+        return JSONResponse(status_code=400, content={"code": exc.code, "detail": exc.detail})
     if not result:
         raise HTTPException(status_code=404, detail=f"Запись глоссария не найдена: {entry_id}")
 

@@ -92,6 +92,7 @@ class GlossaryCreateSchema(BaseModel):
     en_word: str = Field(..., min_length=1, description="English text")
     sb_word: str = Field(..., min_length=1, description="Serbian text")
     ch_word: str = Field(..., min_length=1, description="Chinese text")
+    force_language: bool = False
 
 
 class GlossaryUpdateSchema(BaseModel):
@@ -104,6 +105,7 @@ class GlossaryUpdateSchema(BaseModel):
     en_word: str = Field(..., min_length=1, description="English text")
     sb_word: str = Field(..., min_length=1, description="Serbian text")
     ch_word: str = Field(..., min_length=1, description="Chinese text")
+    force_language: bool = False
 
 
 class GlossaryListResponseSchema(BaseModel):

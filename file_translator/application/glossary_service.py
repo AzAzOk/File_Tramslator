@@ -16,6 +16,36 @@ from file_translator.infrastructure.language_validator import validate_glossary_
 logger = logging.getLogger(__name__)
 
 
+class GlossaryError(Exception):
+    """Base error for glossary service validation failures."""
+
+    code = "GLOSSARY_ERROR"
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+        self.detail = message
+
+
+class LanguageMismatchError(GlossaryError):
+    """Raised when a glossary column value does not match its expected language.
+
+    This is a *warning* that the user may override on their own responsibility.
+    Only the language check can be overridden; the duplicate check always blocks.
+    """
+
+    code = "LANGUAGE_MISMATCH"
+
+
+class DuplicateError(GlossaryError):
+    """Raised when an entry value duplicates an existing one in the collection.
+
+    The duplicate check is never bypassable.
+    """
+
+    code = "DUPLICATE"
+
+
 class GlossaryService:
     """Service for applying glossary term substitutions to text units.
     
@@ -147,17 +177,30 @@ class GlossaryService:
             return await self.collection_repository.get_entries(collection_id)
         return await self.repository.find_all()
 
-    async def add_entry(self, entry_data: Any, collection_id: str = "default", created_by: str = "") -> Any:
-        """Add a new glossary entry with uniqueness and language checks."""
-        self._validate_language(entry_data)
+    async def add_entry(
+        self, entry_data: Any, collection_id: str = "default", created_by: str = "", force_language: bool = False
+    ) -> Any:
+        """Add a new glossary entry with uniqueness and language checks.
+
+        `force_language=True` skips the language check (user overrides the
+        warning on their own responsibility); the duplicate check always runs.
+        """
+        if not force_language:
+            self._validate_language(entry_data)
         await self._check_duplicate(entry_data, collection_id)
         table = self._table_for(collection_id)
         return await self.repository.add(entry_data, table_name=table, created_by=created_by)
     
-    async def update_entry(self, entry_data: Any, collection_id: str = "default", updated_by: str = "") -> Any | None:
-        """Update an existing glossary entry with uniqueness and language checks."""
+    async def update_entry(
+        self, entry_data: Any, collection_id: str = "default", updated_by: str = "", force_language: bool = False
+    ) -> Any | None:
+        """Update an existing glossary entry with uniqueness and language checks.
+
+        `force_language=True` skips the language check; the duplicate check always runs.
+        """
         entry_id = entry_data.id if isinstance(entry_data, GlossaryEntry) else int(getattr(entry_data, "id", 0))
-        self._validate_language(entry_data)
+        if not force_language:
+            self._validate_language(entry_data)
         await self._check_duplicate(entry_data, collection_id, exclude_id=entry_id)
         table = self._table_for(collection_id)
         return await self.repository.update(entry_data, table_name=table, updated_by=updated_by)
@@ -173,7 +216,7 @@ class GlossaryService:
         Exact match is used — case-sensitive, spaces and punctuation matter.
         Empty strings are skipped (not considered duplicates).
 
-        Raises ValueError if any column has a duplicate.
+        Raises DuplicateError if any column has a duplicate.
         """
         existing = await self.get_all_entries(collection_id)
 
@@ -187,19 +230,19 @@ class GlossaryService:
                 continue
 
             if ru and getattr(entry, "ru_word", "") == ru:
-                raise ValueError(
+                raise DuplicateError(
                     f"Русское слово '{ru}' уже существует в коллекции '{collection_id}' (id: {entry.id})"
                 )
             if en and getattr(entry, "en_word", "") == en:
-                raise ValueError(
+                raise DuplicateError(
                     f"Английское слово '{en}' уже существует в коллекции '{collection_id}' (id: {entry.id})"
                 )
             if sb and getattr(entry, "sb_word", "") == sb:
-                raise ValueError(
+                raise DuplicateError(
                     f"Сербское слово '{sb}' уже существует в коллекции '{collection_id}' (id: {entry.id})"
                 )
             if ch and getattr(entry, "ch_word", "") == ch:
-                raise ValueError(
+                raise DuplicateError(
                     f"Китайское слово '{ch}' уже существует в коллекции '{collection_id}' (id: {entry.id})"
                 )
     
@@ -212,7 +255,7 @@ class GlossaryService:
     def _validate_language(entry_data: Any) -> None:
         """Validate each populated column matches its expected language.
 
-        Raises ValueError on the first mismatch.
+        Raises LanguageMismatchError on the first mismatch.
         """
         for col in ("ru_word", "en_word", "sb_word", "ch_word"):
             value = str(getattr(entry_data, col, "") or "").strip()
@@ -220,7 +263,7 @@ class GlossaryService:
                 continue
             error = validate_glossary_value(col, value)
             if error:
-                raise ValueError(error)
+                raise LanguageMismatchError(error)
 
     async def import_from_file(self, file_path: Path) -> int:
         """Import glossary entries from a file."""

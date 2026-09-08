@@ -459,6 +459,7 @@
     <div class="flex justify-end gap-3 mt-6">
       <button id="glossaryModalCancel" class="px-4 py-2 text-sm text-[var(--c-secondary)] hover:bg-[var(--c-surface-container-low)] rounded-lg transition-colors">Отмена</button>
       <button id="glossaryModalSave" class="px-4 py-2 bg-[var(--c-primary-container)] text-[var(--c-on-primary-container)] font-bold rounded-lg hover:brightness-95 transition-all active:scale-[0.97]">Сохранить</button>
+      <button id="glossaryModalSaveAnyway" class="px-4 py-2 bg-[var(--c-error)] text-white font-bold rounded-lg hover:brightness-95 transition-all active:scale-[0.97] hidden" title="Сохранить, игнорируя предупреждение о несовпадении языка. Проверка дубликатов всегда выполняется.">Сохранить всё равно</button>
     </div>
   </div>
 </div>
@@ -1909,6 +1910,7 @@ function openGlossaryModal(id) {
   var ch = document.getElementById('glossaryFormCh');
   var err = document.getElementById('glossaryFormError');
   err.classList.add('hidden');
+  document.getElementById('glossaryModalSaveAnyway').classList.add('hidden');
 
   if (id != null) {
     title.textContent = 'Редактировать запись';
@@ -1931,6 +1933,7 @@ function openGlossaryModal(id) {
 
 function closeGlossaryModal() {
   document.getElementById('glossaryModal').classList.add('hidden');
+  document.getElementById('glossaryModalSaveAnyway').classList.add('hidden');
   editingEntryId = null;
 }
 
@@ -1941,20 +1944,22 @@ document.getElementById('glossaryModal').addEventListener('mousedown', function(
   if (e.target === e.currentTarget) closeGlossaryModal();
 });
 
-document.getElementById('glossaryModalSave').addEventListener('click', async function() {
+async function submitGlossaryForm(forceLanguage) {
   var ru = document.getElementById('glossaryFormRu').value.trim();
   var en = document.getElementById('glossaryFormEn').value.trim();
   var sb = document.getElementById('glossaryFormSb').value.trim();
   var ch = document.getElementById('glossaryFormCh').value.trim();
   var err = document.getElementById('glossaryFormError');
+  var saveAnywayBtn = document.getElementById('glossaryModalSaveAnyway');
 
   if (!ru || !en || !sb || !ch) {
     err.textContent = 'Все поля обязательны для заполнения';
     err.classList.remove('hidden');
+    saveAnywayBtn.classList.add('hidden');
     return;
   }
 
-  var body = { ru_word: ru, en_word: en, sb_word: sb, ch_word: ch };
+  var body = { ru_word: ru, en_word: en, sb_word: sb, ch_word: ch, force_language: !!forceLanguage };
 
   try {
     var resp;
@@ -1977,10 +1982,20 @@ document.getElementById('glossaryModalSave').addEventListener('click', async fun
         body: JSON.stringify(body),
       });
     }
+
+    var data = {};
     if (!resp.ok) {
-      var data = await resp.json().catch(function() { return {}; });
+      data = await resp.json().catch(function() { return {}; });
+      // Show the override action only for the language-mismatch warning.
+      // Duplicate / validation errors never offer an override.
+      if (data.code === 'LANGUAGE_MISMATCH' && !forceLanguage) {
+        saveAnywayBtn.classList.remove('hidden');
+      } else {
+        saveAnywayBtn.classList.add('hidden');
+      }
       throw new Error(data.detail || 'Ошибка сервера');
     }
+
     closeGlossaryModal();
     showToast('Запись сохранена', 'check_circle');
     await loadGlossary();
@@ -1988,6 +2003,14 @@ document.getElementById('glossaryModalSave').addEventListener('click', async fun
     err.textContent = e.message;
     err.classList.remove('hidden');
   }
+}
+
+document.getElementById('glossaryModalSave').addEventListener('click', function() {
+  submitGlossaryForm(false);
+});
+
+document.getElementById('glossaryModalSaveAnyway').addEventListener('click', function() {
+  submitGlossaryForm(true);
 });
 
 async function deleteGlossaryEntry(id) {
