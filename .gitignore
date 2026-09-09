@@ -75,5 +75,9 @@ output/
 # Language detector model cache
 .linguacache/
 
+# OpenSpec (change proposals, specs, archived changes)
+openspec/
+
 # Node.js (if frontend dependencies added)
 node_modules/
+
