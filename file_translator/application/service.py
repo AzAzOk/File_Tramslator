@@ -66,7 +66,7 @@ class TranslationService:
     def _resolve_output_suffix(input_suffix: str) -> str:
         """Return output file suffix per ТЗ 9.2-9.5.
         
-        DXF -> .dxf
+        DXF -> .dwg
         DWG -> .dwg
         PDF -> .pdf
         DOCX/DOC -> .docx

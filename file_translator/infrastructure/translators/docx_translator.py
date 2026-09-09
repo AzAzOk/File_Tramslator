@@ -35,7 +35,6 @@ from file_translator.infrastructure.translators.okapi_service import (
     OkapiServiceError,
     TikalNotAvailableError,
 )
-
 logger = logging.getLogger(__name__)
 
 
@@ -342,6 +341,7 @@ class DocxTranslator(DocumentTranslator):
                     tmp.unlink()
         else:
             logger.debug(f"No changes needed for {docx_path.name}")
+
 
 
     def _cleanup(self):
