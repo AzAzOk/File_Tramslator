@@ -55,7 +55,7 @@ class TranslationService:
     _OUTPUT_FORMAT_MAP = {
         ".dxf": ".dwg",
         ".dwg": ".dwg",
-        ".pdf": ".pdf",
+        ".pdf": ".docx",
         ".docx": ".docx",
         ".doc": ".docx",
         ".xlsx": ".xlsx",
@@ -65,10 +65,10 @@ class TranslationService:
     @staticmethod
     def _resolve_output_suffix(input_suffix: str) -> str:
         """Return output file suffix per ТЗ 9.2-9.5.
-        
+
         DXF -> .dwg
         DWG -> .dwg
-        PDF -> .pdf
+        PDF -> .docx (converted to DOCX via First PDF, then translated)
         DOCX/DOC -> .docx
         XLSX/XLS -> .xlsx
         Unknown -> preserve input suffix
@@ -184,16 +184,20 @@ class TranslationService:
         """Record every temp dir a job uses into job.metadata so the periodic
         orphan sweep never deletes a long-running job's working files.
 
-        Collects the translator-internal ``temp_dir`` (docx_okapi_*, xlsx_*)
-        and the DWG→DXF ODA conversion dir (re-opened at save time).
+        Collects the translator-internal ``temp_dir`` (docx_okapi_*, xlsx_*),
+        the DWG→DXF ODA conversion dir (re-opened at save time), and the
+        PDF→DOCX First-PDF conversion dir (``pdf_convert_dir``) — the latter
+        is owned by PdfTranslator but lives at extracted-data level because
+        the xliff path points into it.
         """
         if not job_id:
             return
         try:
             temp_dirs: list[str] = []
-            td = extracted_data.get("temp_dir")
-            if td:
-                temp_dirs.append(str(td))
+            for key in ("temp_dir", "pdf_convert_dir"):
+                td = extracted_data.get(key)
+                if td:
+                    temp_dirs.append(str(td))
             doc = extracted_data.get("dxf_document")
             if doc is not None and getattr(doc, "source_dxf_path", ""):
                 src = Path(doc.source_dxf_path).parent
@@ -316,6 +320,26 @@ class TranslationService:
                 raise DocumentOpenError(
                     file_path=str(input_path),
                     reason="File not found at extract time",
+                )
+
+            # PDF documents get a distinct CONVERSION stage: the First PDF
+            # converter service turns the PDF into a DOCX before the Okapi
+            # DOCX extraction below. Progress during this stage interpolates
+            # between VALIDATION and EXTRACTION weights over the estimated
+            # conversion deadline (no live progress is available from the
+            # converter service — it returns the DOCX in one response).
+            if input_path.suffix.lower() == ".pdf":
+                from file_translator.infrastructure.converters.pdf_to_docx_converter import (
+                    PdfToDocxConverter,
+                )
+                conv_deadline = max(
+                    1, int(PdfToDocxConverter().resolve_deadline(input_path.stat().st_size))
+                )
+                await self.journal_service.log_info(
+                    JournalStage.EXTRACTION, "Конвертация PDF в DOCX", filename=filename,
+                )
+                await self.job_manager.update_progress(
+                    job_id, JobStage.CONVERSION, batch_index=0, total_batches=conv_deadline,
                 )
 
             extracted_data = translator.extract(
@@ -813,15 +837,16 @@ class TranslationService:
             from file_translator.infrastructure.translators.dxf_translator import DxfTranslator
             return DxfTranslator()
 
-        # Fallback to existing translators for DOCX/XLSX
+        # Fallback to existing translators for PDF/DOCX/XLSX
         from file_translator.infrastructure.translators.docx_translator import DocxTranslator
+        from file_translator.infrastructure.translators.pdf_translator import PdfTranslator
         from file_translator.infrastructure.translators.xlsx_translator import XlsxTranslator
-        
-        translators = [DocxTranslator(), XlsxTranslator()]
+
+        translators = [DocxTranslator(), XlsxTranslator(), PdfTranslator()]
         for translator in translators:
             if translator.can_process(file_path):
                 return translator
-        
+
         return None
     
     def _create_batches(self, text_units: list[TextUnit], batch_size: int,

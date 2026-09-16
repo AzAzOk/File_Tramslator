@@ -63,3 +63,29 @@ class ValidationError(DocumentTranslatorError):
     def __init__(self, field: str = "", message: str = ""):
         full_message = f"Ошибка валидации '{field}': {message}" if field else message
         super().__init__(full_message, {"field": field, "details": message})
+
+
+class ConversionError(DocumentTranslatorError):
+    """Raised when PDF→DOCX conversion via the converter service fails.
+
+    Carries the converter's HTTP status and structured error code as direct
+    attributes (and mirrored in ``context``) so the service layer can surface
+    a precise Russian-language message.
+    """
+
+    def __init__(self, message: str = "Ошибка конвертации PDF в DOCX",
+                 status_code: int = 0, error_code: str = "", context: dict | None = None):
+        self.status_code = status_code
+        self.error_code = error_code
+        ctx = dict(context or {})
+        ctx.update({"status_code": status_code, "error_code": error_code})
+        super().__init__(message, ctx)
+
+
+class ConversionTimeoutError(ConversionError):
+    """Raised when the converter service reports CONVERT_TIMEOUT."""
+
+    def __init__(self, message: str = "Превышено время конвертации PDF",
+                 status_code: int = 504, error_code: str = "CONVERT_TIMEOUT",
+                 context: dict | None = None):
+        super().__init__(message, status_code, error_code, context)

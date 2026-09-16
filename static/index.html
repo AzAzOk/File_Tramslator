@@ -216,12 +216,12 @@
           </div>
           <div>
             <p class="font-display text-lg font-semibold text-[var(--c-on-surface)]">Перетащите файлы сюда</p>
-            <p class="text-sm text-[var(--c-secondary)] mt-1">Поддерживаемые форматы: DOCX, DOC, XLSX, XLS, DXF, DWG</p>
+            <p class="text-sm text-[var(--c-secondary)] mt-1">Поддерживаемые форматы: DOCX, DOC, XLSX, XLS, DXF, DWG, PDF</p>
           </div>
           <label class="inline-flex items-center gap-2 px-5 py-2.5 bg-[var(--c-primary-container)] text-[var(--c-on-primary-container)] font-bold rounded-lg cursor-pointer hover:brightness-95 transition-all active:scale-[0.97]">
             <span class="material-symbols-outlined" aria-hidden="true">add</span>
             Выбрать файлы
-            <input id="fileInput" type="file" multiple class="hidden" accept=".docx,.doc,.xlsx,.xls,.dxf,.dwg">
+            <input id="fileInput" type="file" multiple class="hidden" accept=".docx,.doc,.xlsx,.xls,.dxf,.dwg,.pdf">
           </label>
           <p class="text-xs text-[var(--c-secondary)]">Максимальный размер: 128 MB на файл</p>
         </div>
@@ -902,7 +902,7 @@ function validateFile(file) {
     return `Файл "${file.name}" превышает лимит в 128 MB (${formatSize(file.size)})`;
   }
   const ext = file.name.split('.').pop().toLowerCase();
-  if (!['docx', 'doc', 'xlsx', 'xls', 'dxf', 'dwg'].includes(ext)) {
+  if (!['docx', 'doc', 'xlsx', 'xls', 'dxf', 'dwg', 'pdf'].includes(ext)) {
     return `Неподдерживаемый формат: .${ext}`;
   }
   return null;
@@ -919,6 +919,7 @@ function getFileIcon(filename) {
   const ext = filename.split('.').pop().toLowerCase();
   if (['dxf', 'dwg'].includes(ext)) return 'draw';
   if (['xlsx', 'xls'].includes(ext)) return 'table_chart';
+  if (ext === 'pdf') return 'picture_as_pdf';
   return 'description';
 }
 
@@ -1037,7 +1038,9 @@ function updateFileCardProgress(fileKey, status, pct, stage, errorText, queuePos
     if (pct != null && pct > 0) {
       fill.style.width = pct + '%';
       const stageName = (stage || '').toLowerCase();
-      if (stageName === 'validation' || stageName === 'extraction' || stageName === 'glossary') {
+      if (stageName === 'conversion') {
+        statusText.textContent = `🔁 Конвертация PDF в DOCX... ${pct}%`;
+      } else if (stageName === 'validation' || stageName === 'extraction' || stageName === 'glossary') {
         statusText.textContent = `📄 Извлечение текста... ${pct}%`;
       } else {
         statusText.textContent = `🔄 Перевод... ${pct}%`;
@@ -1234,7 +1237,15 @@ function updateJobStatusUI(jobId) {
   } else if (s === 'running' && p >= 0) {
     if (progressFill) progressFill.style.width = pct + '%';
     const stage = (job.stage || '').toLowerCase();
-    if (stage === 'validation' || stage === 'extraction' || stage === 'glossary') {
+    if (stage === 'conversion') {
+      const span = document.createElement('span');
+      span.className = 'animate-pulse';
+      span.textContent = '🔁 Конвертация PDF в DOCX...';
+      el.appendChild(span);
+      if (p > 0) {
+        el.appendChild(document.createTextNode(` ${pct}%`));
+      }
+    } else if (stage === 'validation' || stage === 'extraction' || stage === 'glossary') {
       el.textContent = `📄 Извлечение текста... ${pct}%`;
     } else if (stage === 'translation' || stage === 'save' || p > 0) {
       const span = document.createElement('span');

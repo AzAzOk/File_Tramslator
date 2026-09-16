@@ -293,7 +293,7 @@ async def _cleanup_orphaned_temp_dirs(interval: int = CLEANUP_INTERVAL_SECONDS) 
             #    dirs older than JOB_TTL_SECONDS and not referenced by any job record. ──
             temp_root = Path(tempfile.gettempdir())
             cleaned_dirs = 0
-            for prefix_pattern in ("translator_*", "docx_okapi_*", "tikal_*", "oda_*"):
+            for prefix_pattern in ("translator_*", "docx_okapi_*", "tikal_*", "oda_*", "pdf_convert_*"):
                 for d in temp_root.glob(prefix_pattern):
                     try:
                         if str(d) in protected_dirs:
@@ -479,10 +479,10 @@ async def create_translation_job(
             detail="Имя файла обязательно"
         )
     ext = Path(file.filename).suffix.lower()
-    if ext not in ('.docx', '.doc', '.xlsx', '.xls', '.dxf', '.dwg'):
+    if ext not in ('.docx', '.doc', '.xlsx', '.xls', '.dxf', '.dwg', '.pdf'):
         raise HTTPException(
             status_code=400,
-            detail="Поддерживаются только файлы DOCX, DOC, XLSX, XLS, DXF и DWG"
+            detail="Поддерживаются только файлы DOCX, DOC, XLSX, XLS, DXF, DWG и PDF"
         )
 
     await _check_file_size(file)
@@ -573,7 +573,7 @@ async def create_batch_translation_jobs(
         if not file.filename:
             continue
         ext = Path(file.filename).suffix.lower()
-        if ext not in ('.docx', '.doc', '.xlsx', '.xls'):
+        if ext not in ('.docx', '.doc', '.xlsx', '.xls', '.pdf'):
             logger.warning(f"Skipping unsupported file: {file.filename}")
             continue
 
@@ -753,7 +753,7 @@ async def translate_document(
             status_code=400,
             detail="Имя файла обязательно"
         )
-    allowed_extensions = ('.docx', '.doc', '.xlsx', '.xls')
+    allowed_extensions = ('.docx', '.doc', '.xlsx', '.xls', '.pdf')
     ext = Path(file.filename).suffix.lower()
     if ext not in allowed_extensions:
         raise HTTPException(
@@ -841,10 +841,10 @@ async def translate_document(
 async def supported_formats():
     """Return list of supported document formats."""
     return {
-        "formats": ["docx", "doc", "xlsx", "xls"],
+        "formats": ["docx", "doc", "xlsx", "xls", "pdf"],
         "dxf_stub": True,
         "dxf_note": "Архитектура готова, логика перевода ещё не реализована",
-        "coming_soon": ["pdf", "dwg"],
+        "coming_soon": ["dwg"],
     }
 
 
@@ -867,10 +867,10 @@ async def validate_document(
                      "severity": "error"}],
         )
     ext = Path(file.filename).suffix.lower()
-    if ext not in ('.docx', '.doc', '.xlsx', '.xls'):
+    if ext not in ('.docx', '.doc', '.xlsx', '.xls', '.pdf'):
         return ValidationReportSchema(
             passed=False,
-            errors=[{"code": "UNSUPPORTED_FORMAT", "message": "Поддерживаются только файлы DOCX, DOC, XLSX и XLS",
+            errors=[{"code": "UNSUPPORTED_FORMAT", "message": "Поддерживаются только файлы DOCX, DOC, XLSX, XLS и PDF",
                      "severity": "error"}],
         )
     

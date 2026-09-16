@@ -68,6 +68,53 @@ File Translator v2.0.0 — FastAPI backend that translates DOCX files via LLM (O
 
 **Output**: always `.docx` (`.doc` → `.docx` in `_OUTPUT_FORMAT_MAP`).
 
+### PDF support via First PDF converter (2026-09-14)
+**.pdf files are now supported** — automatically converted to `.docx`, then run
+through the normal DOCX translation pipeline. Conversion is delegated to a
+separate companion service, **`first_pdf_converter`** (FastAPI + `pywinauto`),
+which drives the **First PDF 6.4** desktop app via Windows UI Automation.
+
+**Why a separate service**: First PDF is a desktop WinForms/WPF app that needs an
+interactive Windows session and cannot run inside the Docker container. The main
+API stays Docker-based and calls the converter over HTTP (`http://172.17.106.164:8001`,
+override with `PDF_CONVERTER_URL`). OCR is intentionally **not** used — First PDF
+produces a text-layer DOCX that Tikal can process.
+
+**How the pipeline works**:
+- `PdfTranslator` (`infrastructure/translators/pdf_translator.py`) is a thin
+  **composite** over the internal `DocxTranslator` (composition, NOT inheritance —
+  the base `extract()` calls `self._cleanup()`, which would delete the converted
+  DOCX). It creates a `pdf_convert_*` temp dir, calls the converter synchronously
+  in a worker thread (`convert_sync`), then delegates extract/translate/save to a
+  `DocxTranslator` instance bound to the converted file.
+- `PdfToDocxConverter`
+  (`infrastructure/converters/pdf_to_docx_converter.py`) is the HTTP client
+  (`httpx`). `async convert()` wraps the blocking `convert_sync()` via
+  `asyncio.to_thread`. It maps HTTP error codes to `ConversionError` /
+  `ConversionTimeoutError`.
+- **Smart per-request deadline** (no fixed timeout): `estimate_deadline()` =
+  `FLOOR (30 s) + ceil(bytes / 1 MB) * 3.7 s`, doubled for slack, capped at
+  `FIRST_PDF_MAX_TIMEOUT` (3600 s). Sent to the service as the
+  `X-Timeout-Seconds` header; `resolve_deadline()` is also used as the client-side
+  httpx timeout so both ends agree.
+- **New processing stage** `ProcessingStage.CONVERSION = "conversion"` (weight
+  `0.12`, between `VALIDATION` 0.05 and `EXTRACTION` 0.20) drives the visible
+  «🔁 Конвертация PDF в DOCX…» progress step.
+- Temp dirs (`pdf_convert_*`) are registered via `_register_temp_dirs` and swept
+  by the orphan cleanup job alongside `translator_*`/`docx_okapi_*`/`tikal_*`.
+
+**Output**: `.pdf` → `.docx` (`_OUTPUT_FORMAT_MAP[".pdf"] = ".docx"`); download
+filename is `<stem>_translated.docx`.
+
+**Key files**:
+- `file_translator/infrastructure/converters/pdf_to_docx_converter.py` — HTTP client + deadline logic
+- `file_translator/infrastructure/translators/pdf_translator.py` — `PdfTranslator` composite
+- `file_translator/domain/errors.py` — `ConversionError` / `ConversionTimeoutError`
+- `file_translator/domain/job.py` — `CONVERSION` stage + progress interpolation
+- `file_translator/application/service.py` — output map, `_find_translator`, stage call, `_register_temp_dirs`
+- `file_translator/presentation/api/app.py` — `.pdf` allow-lists, `/supported-formats`, orphan sweep
+- `first_pdf_converter/` — standalone converter service (see its own `README.md`)
+
 ## Frontend (Static HTML SPA)
 
 Main UI at `static/index.html`, served directly by FastAPI (`StaticFiles` mount at `/`).
@@ -229,7 +276,7 @@ Remaining (low priority / out of scope):
 **Files**: `file_translator/infrastructure/translators/okapi_service.py:_simple_plain_text`, `okapi_service.py:_PLACEHOLDER_TAGS`
 
 ## Still to do
-- PDF, DXF/DWG translators (deferred)
+- DXF/DWG translators (deferred)
 - `new_collection_name` stub in import — table creation not implemented (requires CREATE TABLE LIKE + ACL update)
 
 ## Implemented (glossary import/export — 2026-07-02)

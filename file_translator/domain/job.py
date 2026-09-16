@@ -24,6 +24,7 @@ class ProcessingStage(Enum):
     QUEUED = "queued"
     RECEIVED = "received"
     VALIDATION = "validation"
+    CONVERSION = "conversion"
     EXTRACTION = "extraction"
     GLOSSARY = "glossary"
     TRANSLATION = "translation"
@@ -36,6 +37,7 @@ _STAGE_WEIGHTS: dict[ProcessingStage, float] = {
     ProcessingStage.QUEUED: 0.0,
     ProcessingStage.RECEIVED: 0.0,
     ProcessingStage.VALIDATION: 0.05,
+    ProcessingStage.CONVERSION: 0.12,
     ProcessingStage.EXTRACTION: 0.20,
     ProcessingStage.GLOSSARY: 0.25,
     ProcessingStage.TRANSLATION: 0.80,
@@ -99,15 +101,21 @@ class Job:
     def update_progress(self, stage: ProcessingStage, batch_index: int = 0,
                         total_batches: int = 0) -> None:
         """Update progress based on current stage and batch progress.
-        
-        If currently in TRANSLATION stage, progress interpolates between
-        the stage start weight and the stage end weight based on batch progress.
+
+        If currently in TRANSLATION or CONVERSION stage, progress
+        interpolates between the stage start weight and the stage end weight
+        based on batch progress.
         """
         self.current_stage = stage
-        
+
         if stage == ProcessingStage.TRANSLATION and total_batches > 0:
             stage_start = _STAGE_WEIGHTS[ProcessingStage.EXTRACTION]
             stage_end = _STAGE_WEIGHTS[ProcessingStage.SAVE]
+            batch_progress = batch_index / total_batches if total_batches > 0 else 0
+            self.progress = stage_start + (stage_end - stage_start) * batch_progress
+        elif stage == ProcessingStage.CONVERSION and total_batches > 0:
+            stage_start = _STAGE_WEIGHTS[ProcessingStage.VALIDATION]
+            stage_end = _STAGE_WEIGHTS[ProcessingStage.EXTRACTION]
             batch_progress = batch_index / total_batches if total_batches > 0 else 0
             self.progress = stage_start + (stage_end - stage_start) * batch_progress
         else:
