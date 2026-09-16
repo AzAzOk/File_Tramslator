@@ -33,8 +33,14 @@ logger = logging.getLogger(__name__)
 # Braces {...} are NOT matched — they are group markers that may surround
 # translatable text (e.g. {\C7;Щит питания...}). Only the format codes
 # inside braces are encoded individually by the patterns above.
+#
+# The parameter run is `[^;\\]*` (NOT `[^;]*`): it must stop at the next
+# backslash, otherwise a standalone code such as `\P` would greedily swallow
+# the following text plus the next code up to its `;` — e.g. `\PMiddle\H1.5x;`
+# must tokenize as `\P` + literal "Middle" + `\H1.5x;`, not as one token that
+# hides "Middle" from the LLM. MTEXT format-code parameters never contain `\`.
 _FMT_PATTERN = re.compile(
-    r"\\[A-Za-z][^;]*;|"      # \code...;  (any format code with params terminated by ;)
+    r"\\[A-Za-z][^;\\]*;|"    # \code...;  (format code with params terminated by ;)
     r"\\[A-Za-z~_]"           # \code       (standalone codes like \P, \L, \O, \_, \~)
 )
 

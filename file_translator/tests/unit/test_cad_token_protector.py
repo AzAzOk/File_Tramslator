@@ -35,15 +35,18 @@ class TestFmtPattern:
         assert m.group(0) == "\\S1/2;"
 
     def test_font_block(self):
-        """Font block without closing } won't match."""
+        """{\\fArial|b0|i0; — the \\f...; code matches; the '{' is not consumed."""
         m = _FMT_PATTERN.search("{\\fArial|b0|i0;")
-        assert m is None
+        assert m is not None
+        assert m.group(0) == "\\fArial|b0|i0;"
+        assert m.start() == 1  # after the opening brace
 
     def test_font_block_with_closing_brace(self):
-        """{\\fArial|b0|i0;Text} — matches full block."""
+        """{\\fArial|b0|i0;Text} — only the \\f...; code matches; {Text} stays."""
         m = _FMT_PATTERN.search("{\\fArial|b0|i0;Text}")
         assert m is not None
-        assert m.group(0) == "{\\fArial|b0|i0;Text}"
+        assert m.group(0) == "\\fArial|b0|i0;"
+        assert m.end() == 15  # before 'Text'
 
     def test_alignment_bare(self):
         """\\A alone (no digit) must still match."""
@@ -117,9 +120,12 @@ class TestEncodeDecode:
     def test_multiple_format_codes(self):
         text = "Before\\PMiddle\\H1.5x;After\\Q30;End"
         encoded, tokens = self.protector.encode(text)
-        # Should have 4 tokens: \P, \H1.5x;, \Q, \Q30;
-        # Actually: \P, \H1.5x;, \Q, \Q30; = 4 tokens
-        assert len(tokens) >= 3
+        # 3 tokens: \P, \H1.5x;, \Q30;
+        assert len(tokens) == 3
+        # Regression: a standalone code must not swallow the following text up
+        # to the next ';' — "Middle" has to stay translatable in encoded text.
+        assert "Middle" in encoded
+        assert "Before[[F0]]Middle[[F1]]After[[F2]]End" == encoded
         restored = self.protector.decode(encoded, tokens)
         assert restored == text
 
@@ -137,8 +143,9 @@ class TestEncodeDecode:
     def test_entity_id_in_placeholder(self):
         text = "\\P"
         encoded, tokens = self.protector.encode(text, entity_id="ent42")
-        assert "[[FMT_ent42_0]]" in encoded
-        assert tokens[0]["placeholder"] == "[[FMT_ent42_0]]"
+        assert "[[F0]]" in encoded
+        assert tokens[0]["placeholder"] == "[[F0]]"
+        assert tokens[0]["original"] == "\\P"
 
     def test_round_trip_complex_mtext(self):
         """Full MTEXT string with mixed codes — the exact pattern that
@@ -169,7 +176,7 @@ class TestEncodeDecode:
         text = "First\\PSecond\\PThird"
         encoded, tokens = self.protector.encode(text)
         assert len(tokens) == 2
-        # Both placeholders are [[FMT_..._0]] and [[FMT_..._1]]
+        # Both placeholders are [[F0]] and [[F1]]
         restored = self.protector.decode(encoded, tokens)
         assert restored == text
         assert restored.count("\\P") == 2

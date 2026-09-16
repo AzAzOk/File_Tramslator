@@ -33,7 +33,8 @@ class TranslationValidator:
     3. Line count (``\\P`` / newlines) matches between input and output
     """
 
-    _PLACEHOLDER_RE = re.compile(r"\[\[FMT_\w+]]")
+    # Keep in sync with CadTokenProtector._PLACEHOLDER_RE (`[[F0]]`, `[[F1]]`, ...).
+    _PLACEHOLDER_RE = re.compile(r"\[\[F\d+\]\]")
     _FMT_CODE_RE = re.compile(r"\\[PASHLQWT_OL~]|\\S[^;]*;")
 
     def validate(
