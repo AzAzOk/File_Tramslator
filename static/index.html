@@ -152,6 +152,9 @@
   .modal-content { animation: scaleIn .2s ease-out; }
   @keyframes scaleIn { from { opacity: 0; transform: scale(.95); } to { opacity: 1; transform: scale(1); } }
 
+  /* Auth backdrop fallback (when WebGL/THREE is unavailable) */
+  .auth-backdrop-fallback { background: rgba(0, 0, 0, 0.3); }
+
   /* ── Glossary table ── */
   .glossary-row { transition: background .15s; }
   .glossary-row:hover { background: var(--c-surface-container-low); }
@@ -495,8 +498,9 @@
 </div>
 
 <!-- ═══ Login Modal ═══ -->
-<div id="loginModal" class="modal-overlay fixed inset-0 z-50 bg-black/30 flex items-center justify-center hidden">
-  <div class="modal-content relative bg-[var(--c-surface-container-lowest)] border border-[var(--c-outline-variant)] rounded-xl p-6 w-full max-w-sm mx-4 shadow-2xl">
+<div id="loginModal" class="modal-overlay fixed inset-0 z-50 flex items-center justify-center hidden">
+  <div id="authBackdrop" class="absolute inset-0 pointer-events-none" aria-hidden="true"></div>
+  <div class="modal-content relative z-10 bg-[var(--c-surface-container-lowest)] border border-[var(--c-outline-variant)] rounded-xl p-6 w-full max-w-sm mx-4 shadow-2xl">
     <div class="flex items-center justify-between mb-4">
       <h3 class="font-display text-lg font-semibold text-[var(--c-on-surface)]">Вход</h3>
       <button id="loginModalClose" class="p-1 rounded-full hover:bg-[var(--c-surface-container-low)] transition-colors text-[var(--c-secondary)]" >
@@ -524,6 +528,7 @@
 <!-- ═══ Toast ═══ -->
 <div id="toastContainer" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2"></div>
 
+<script src="three.min.js"></script>
 <script>
 // ══════════════════════════════════════════════════
 //  Theme
@@ -667,12 +672,14 @@ function openLoginModalAuto() {
   loginPassword.value = '';
   loginError.classList.add('hidden');
   loginModal.classList.remove('hidden');
+  startAuthBackdrop();
   setTimeout(() => loginUsername.focus(), 100);
 }
 
 // Silent close (no error reset) - used after auth restore on page load
 function closeLoginModalSilent() {
   loginModal.classList.add('hidden');
+  stopAuthBackdrop();
 }
 
 async function tryRefreshToken() {
@@ -758,6 +765,7 @@ loginSubmit.addEventListener('click', async () => {
     isAuthenticated = true;
     // Close modal unconditionally after successful login
     loginModal.classList.add('hidden');
+    stopAuthBackdrop();
     await updateAuthUI();
     await loadCollections();
     await restoreActiveJobs();
@@ -778,6 +786,252 @@ logoutBtn.addEventListener('click', async () => {
   clearAuthState();
   showToast('Выход выполнен', 'check_circle');
 });
+
+// ══════════════════════════════════════════════════
+//  Auth backdrop — ambient Three.js CAD background
+// ══════════════════════════════════════════════════
+
+let authBackdropState = null;       // scene bundle; null = unavailable/not initialized
+let authBackdropActive = false;     // rAF loop permitted only while true
+let authBackdropT = 0;
+let authBackdropMouseX = 0;
+let authBackdropMouseY = 0;
+let authBackdropTargetX = 0;
+let authBackdropTargetY = 0;
+const authBackdropReducedMq = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+function authBackdropTheme() {
+  const cs = getComputedStyle(document.documentElement);
+  const val = (name) => (cs.getPropertyValue(name) || '').trim();
+  return {
+    dark: document.documentElement.classList.contains('dark'),
+    primary: val('--c-primary') || '#FDBB30',
+    primaryContainer: val('--c-primary-container') || '#FFD966',
+    secondary: val('--c-secondary') || '#6B6B6B',
+    outline: val('--c-outline') || '#D1D1D1',
+    background: val('--c-background') || '#F8F9FF',
+  };
+}
+
+function initAuthBackdrop() {
+  try {
+    if (typeof THREE === 'undefined') throw new Error('THREE not loaded');
+    const host = document.getElementById('authBackdrop');
+    if (!host) return null;
+    const probe = document.createElement('canvas');
+    if (!probe.getContext('webgl') && !probe.getContext('experimental-webgl')) {
+      throw new Error('WebGL unavailable');
+    }
+
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const scale = Math.min(1, Math.min(w, h) / 900);
+    const nodeCount = Math.max(30, Math.round(85 * scale));
+    const maxConnections = Math.max(80, Math.round(240 * scale));
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(55, w / h, 0.1, 1000);
+    camera.position.set(0, 5, 85);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(w, h);
+    host.appendChild(renderer.domElement);
+
+    const mainGroup = new THREE.Group();
+    scene.add(mainGroup);
+
+    // Technical nodes
+    const coords = new Float32Array(nodeCount * 3);
+    const nodeColors = new Float32Array(nodeCount * 3);
+    const nodeRands = new Float32Array(nodeCount);
+    const spanX = 160 * scale, spanY = 90 * scale, spanZ = 80 * scale;
+    for (let i = 0; i < nodeCount; i++) {
+      coords[i * 3] = (Math.random() - 0.5) * spanX;
+      coords[i * 3 + 1] = (Math.random() - 0.5) * spanY;
+      coords[i * 3 + 2] = (Math.random() - 0.5) * spanZ;
+      nodeRands[i] = Math.random();
+    }
+    const nodesGeo = new THREE.BufferGeometry();
+    nodesGeo.setAttribute('position', new THREE.BufferAttribute(coords, 3));
+    nodesGeo.setAttribute('color', new THREE.BufferAttribute(nodeColors, 3));
+    const nodesMat = new THREE.PointsMaterial({ size: 2.8, vertexColors: true, transparent: true, opacity: 0.9 });
+    const nodePoints = new THREE.Points(nodesGeo, nodesMat);
+    mainGroup.add(nodePoints);
+
+    // Dynamic connecting lines
+    const linePositions = new Float32Array(maxConnections * 6);
+    const lineGeo = new THREE.BufferGeometry();
+    lineGeo.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+    const lineMat = new THREE.LineBasicMaterial({ color: 0xffd200, transparent: true, opacity: 0.28 });
+    const lineSegments = new THREE.LineSegments(lineGeo, lineMat);
+    mainGroup.add(lineSegments);
+
+    // Wireframe CAD solids
+    const gridSize = 180 * scale;
+    const gridDivisions = Math.max(24, Math.round(45 * scale));
+    const solidsMat = {
+      primary: new THREE.LineBasicMaterial({ color: 0xffd200, transparent: true, opacity: 0.55 }),
+      dim: new THREE.LineBasicMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.35 }),
+    };
+    const edges = [
+      { geo: new THREE.EdgesGeometry(new THREE.BoxGeometry(16 * scale, 16 * scale, 16 * scale)), pos: [-48 * scale, 16 * scale, -10 * scale], rot: [0.005, 0.007], mat: 'primary' },
+      { geo: new THREE.EdgesGeometry(new THREE.CylinderGeometry(11 * scale, 11 * scale, 4 * scale, 20, 1, true)), pos: [52 * scale, -12 * scale, -15 * scale], rot: [0.006, 0.004], mat: 'primary' },
+      { geo: new THREE.EdgesGeometry(new THREE.OctahedronGeometry(10 * scale)), pos: [-38 * scale, -20 * scale, 5 * scale], rot: [-0.005, 0.006], mat: 'dim' },
+      { geo: new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(9 * scale, 0)), pos: [45 * scale, 20 * scale, 0], rot: [0.004, -0.006], mat: 'dim' },
+      { geo: new THREE.EdgesGeometry(new THREE.BoxGeometry(16 * scale, 16 * scale, 16 * scale)), pos: [0, -18 * scale, -30 * scale], rot: [0.003, 0.005], mat: 'dim' },
+    ];
+    const solids = [];
+    edges.forEach(ed => {
+      const mesh = new THREE.LineSegments(ed.geo, solidsMat[ed.mat]);
+      mesh.position.set(ed.pos[0], ed.pos[1], ed.pos[2]);
+      mainGroup.add(mesh);
+      solids.push({ mesh, rot: ed.rot, mat: ed.mat });
+    });
+
+    const state = {
+      host, renderer, scene, camera, mainGroup,
+      nodeCount, coords, nodeRands, nodesGeo, nodePoints,
+      linePositions, lineGeo, lineMat, lineSegments, maxConnections,
+      solids, solidsMat, gridSize, gridDivisions, grid: null,
+    };
+    authBackdropApplyTheme(state);
+    return state;
+  } catch (e) {
+    console.warn('AuthBackdrop недоступен, использую scrim-фолбэк:', e);
+    const host = document.getElementById('authBackdrop');
+    if (host) host.classList.add('auth-backdrop-fallback');
+    return null;
+  }
+}
+
+function authBackdropApplyTheme(state) {
+  const theme = authBackdropTheme();
+  const cP = new THREE.Color(theme.primary);
+  const cS = new THREE.Color(theme.secondary);
+  const cA = new THREE.Color(theme.primaryContainer);
+  const cO = new THREE.Color(theme.outline);
+
+  state.renderer.setClearColor(theme.background, 1);
+
+  // Blueprint grid rebuild (cheap; one per theme flip)
+  if (state.grid && state.grid.parent) state.grid.parent.remove(state.grid);
+  state.grid = new THREE.GridHelper(state.gridSize, state.gridDivisions, cP, cO);
+  state.grid.position.y = -24;
+  state.grid.material.transparent = true;
+  state.grid.material.opacity = theme.dark ? 0.35 : 0.22;
+  state.mainGroup.add(state.grid);
+
+  // Node colors: stable pattern, new palette
+  const colors = state.nodesGeo.attributes.color.array;
+  for (let i = 0; i < state.nodeCount; i++) {
+    const r = state.nodeRands[i];
+    const col = r > 0.6 ? cS : (r > 0.45 ? cA : cP);
+    colors[i * 3] = col.r; colors[i * 3 + 1] = col.g; colors[i * 3 + 2] = col.b;
+  }
+  state.nodesGeo.attributes.color.needsUpdate = true;
+
+  state.lineMat.color.copy(cP);
+  state.solidsMat.primary.color.copy(cP);
+  state.solidsMat.dim.color.copy(cS);
+}
+
+function startAuthBackdrop() {
+  if (!authBackdropState) authBackdropState = initAuthBackdrop();
+  if (!authBackdropState) return;
+  authBackdropActive = true;
+  if (authBackdropReducedMq.matches || document.hidden) {
+    // Static frame only; no loop
+    authBackdropState.renderer.render(authBackdropState.scene, authBackdropState.camera);
+  } else {
+    requestAnimationFrame(authBackdropFrame);
+  }
+}
+
+function stopAuthBackdrop() {
+  authBackdropActive = false;
+}
+
+function authBackdropFrame() {
+  if (!authBackdropActive || document.hidden) return;
+  if (authBackdropReducedMq.matches) return;
+  const st = authBackdropState;
+  if (!st) return;
+
+  authBackdropT += 0.005;
+  authBackdropTargetX += (authBackdropMouseX - authBackdropTargetX) * 0.04;
+  authBackdropTargetY += (authBackdropMouseY - authBackdropTargetY) * 0.04;
+  st.mainGroup.rotation.y = authBackdropT * 0.2 + authBackdropTargetX * 0.025;
+  st.mainGroup.rotation.x = Math.sin(authBackdropT * 0.4) * 0.05 + authBackdropTargetY * 0.02;
+  st.solids.forEach(obj => { obj.mesh.rotation.x += obj.rot[0]; obj.mesh.rotation.y += obj.rot[1]; });
+
+  let lineIdx = 0;
+  const coords = st.coords, n = st.nodeCount;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (lineIdx >= st.maxConnections) break;
+      const dx = coords[i * 3] - coords[j * 3];
+      const dy = coords[i * 3 + 1] - coords[j * 3 + 1];
+      const dz = coords[i * 3 + 2] - coords[j * 3 + 2];
+      if ((dx * dx + dy * dy + dz * dz) < 32 * 32) {
+        const o = lineIdx * 6;
+        st.linePositions[o] = coords[i * 3];
+        st.linePositions[o + 1] = coords[i * 3 + 1];
+        st.linePositions[o + 2] = coords[i * 3 + 2];
+        st.linePositions[o + 3] = coords[j * 3];
+        st.linePositions[o + 4] = coords[j * 3 + 1];
+        st.linePositions[o + 5] = coords[j * 3 + 2];
+        lineIdx++;
+      }
+    }
+  }
+  st.lineGeo.attributes.position.needsUpdate = true;
+  st.lineGeo.setDrawRange(0, lineIdx * 2);
+
+  st.renderer.render(st.scene, st.camera);
+  requestAnimationFrame(authBackdropFrame);
+}
+
+window.addEventListener('mousemove', (e) => {
+  if (!authBackdropActive || document.hidden) return;
+  authBackdropMouseX = (e.clientX - window.innerWidth / 2) * 0.025;
+  authBackdropMouseY = (e.clientY - window.innerHeight / 2) * 0.025;
+});
+
+window.addEventListener('resize', () => {
+  const st = authBackdropState;
+  if (!st) return;
+  st.camera.aspect = window.innerWidth / window.innerHeight;
+  st.camera.updateProjectionMatrix();
+  st.renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    authBackdropActive = false;
+  } else if (!loginModal.classList.contains('hidden') && !authBackdropActive) {
+    startAuthBackdrop();
+  }
+});
+
+authBackdropReducedMq.addEventListener?.('change', () => {
+  const st = authBackdropState;
+  if (!st || !authBackdropActive) return;
+  if (authBackdropReducedMq.matches) {
+    st.renderer.render(st.scene, st.camera); // one static frame
+  } else if (!document.hidden) {
+    requestAnimationFrame(authBackdropFrame);
+  }
+});
+
+// Theme changes (html.dark toggled by applyTheme) re-tint the scene on the fly.
+const authBackdropObserver = new MutationObserver(() => {
+  if (authBackdropState) {
+    authBackdropApplyTheme(authBackdropState);
+    authBackdropState.renderer.render(authBackdropState.scene, authBackdropState.camera);
+  }
+});
+authBackdropObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 
 // Check auth on page load, then restore active jobs, settings and load collections
 updateAuthUI().then(() => {
