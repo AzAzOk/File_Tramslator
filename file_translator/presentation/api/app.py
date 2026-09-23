@@ -23,6 +23,12 @@ from file_translator.domain.auth import AuthCredentials
 from file_translator.infrastructure.auth.jwt_auth_provider import JwtAuthProvider
 from file_translator.infrastructure.auth.ldap_service import LdapService
 from file_translator.infrastructure.config import MAX_UPLOAD_SIZE_BYTES, JOB_TTL_SECONDS, CLEANUP_INTERVAL_SECONDS
+from file_translator.diagnostics.retention import (
+    RETAINED_MARKER,
+    mark_retained,
+    purge_debug_artifacts,
+    retention_enabled,
+)
 from file_translator.infrastructure.providers.mongo_provider import MongoProvider
 from file_translator.infrastructure.repositories.auth_repository import (
     MongoSessionRepository,
@@ -217,8 +223,20 @@ async def _run_translation_job(job_id: str, file_path: str, request: Translation
             pass
 
 
-def _cleanup_temp_dir(temp_dir: str, job_id: str) -> None:
-    """Clean up temp directory, ignoring if already removed (cancel race)."""
+def _cleanup_temp_dir(temp_dir: str, job_id: str, retain: bool | None = None) -> None:
+    """Clean up temp directory, ignoring if already removed (cancel race).
+
+    When ``retain`` is truthy (debug artifact retention, group 7) the
+    directory is NOT deleted — it is marked with a sidecar so the periodic
+    purge (``purge_debug_artifacts``) can manage it later. ``retain``
+    defaults to the global/per-job retention setting via ``retention_enabled``.
+    """
+    if retain is None:
+        retain = retention_enabled()
+    if retain:
+        mark_retained(temp_dir, job_id)
+        logger.info(f"Debug retention: kept temp dir {temp_dir} for job {job_id}")
+        return
     try:
         shutil.rmtree(temp_dir)
     except FileNotFoundError:
@@ -233,6 +251,10 @@ def _cleanup_job_temp_dirs(job: Any, job_id: str, fallback: str | None = None) -
 
     ``fallback`` is used when the job record carries no temp dir metadata
     (legacy jobs, synchronous path) — e.g. ``output_path.parent``.
+
+    When the job is retained (``DEBUG_KEEP_ARTIFACTS`` env or per-job
+    ``keep_artifacts`` metadata) the dirs are marked for retention instead
+    of being deleted.
     """
     seen: set[str] = set()
     dirs: list[str] = []
@@ -242,10 +264,11 @@ def _cleanup_job_temp_dirs(job: Any, job_id: str, fallback: str | None = None) -
     dirs.extend(job.metadata.get("temp_dirs", []) or [] if job else [])
     if fallback:
         dirs.append(fallback)
+    retain = retention_enabled(job)
     for d in dirs:
         if d and str(d) not in seen:
             seen.add(str(d))
-            _cleanup_temp_dir(str(d), job_id)
+            _cleanup_temp_dir(str(d), job_id, retain=retain)
 
 
 # Per-user job queue for sequential processing
@@ -290,7 +313,9 @@ async def _cleanup_orphaned_temp_dirs(interval: int = CLEANUP_INTERVAL_SECONDS) 
                 logger.debug(f"Could not load job temp dirs for cleanup protection: {e}")
 
             # ── Filesystem scan: delete orphaned translator_*/docx_okapi_*/tikal_*/oda_*
-            #    dirs older than JOB_TTL_SECONDS and not referenced by any job record. ──
+            #    dirs older than JOB_TTL_SECONDS and not referenced by any job record.
+            #    Retained debug-artifact dirs (carrying RETAINED_MARKER) are skipped
+            #    here and managed separately by _purge_debug_artifacts below. ──
             temp_root = Path(tempfile.gettempdir())
             cleaned_dirs = 0
             for prefix_pattern in ("translator_*", "docx_okapi_*", "tikal_*", "oda_*", "pdf_convert_*"):
@@ -298,9 +323,11 @@ async def _cleanup_orphaned_temp_dirs(interval: int = CLEANUP_INTERVAL_SECONDS) 
                     try:
                         if str(d) in protected_dirs:
                             continue
+                        if (d / RETAINED_MARKER).exists():
+                            continue
                         mtime = d.stat().st_mtime
                         if mtime < cutoff_ts:
-                            _cleanup_temp_dir(str(d), "auto_cleanup")
+                            _cleanup_temp_dir(str(d), "auto_cleanup", retain=False)
                             cleaned_dirs += 1
                     except OSError:
                         pass
@@ -310,6 +337,21 @@ async def _cleanup_orphaned_temp_dirs(interval: int = CLEANUP_INTERVAL_SECONDS) 
                     f"Periodic cleanup removed {cleaned_dirs} orphaned temp dir(s) "
                     f"older than {int(JOB_TTL_SECONDS // 86400)} days"
                 )
+
+            # ── Debug artifact retention: purge retained dirs beyond cap/age.
+            #    Runs regardless of the current DEBUG_KEEP_ARTIFACTS value so
+            #    dirs retained earlier still age out even if the flag was turned off.
+            #    The marker file carries the owning job:<uuid> for the audit log. ──
+            try:
+                def _log_purged(info):
+                    job_ref = info.get("job_id") or "<unknown>"
+                    logger.info(
+                        "Debug artifact purge removed retained dir %s (job %s)",
+                        info.get("path"), job_ref,
+                    )
+                purge_debug_artifacts(on_purge=_log_purged)
+            except Exception as e:
+                logger.debug(f"Debug artifact purge skipped: {e}")
 
             # ── Redis safety net: delete only TERMINAL jobs whose TTL has elapsed.
             #    Age is measured from when the job reached its terminal state
@@ -322,6 +364,11 @@ async def _cleanup_orphaned_temp_dirs(interval: int = CLEANUP_INTERVAL_SECONDS) 
                 cleaned_jobs = 0
                 for job in jobs:
                     if not job.is_terminal:
+                        continue
+                    if retention_enabled(job):
+                        # Retained debug artifacts keep the job record alive so
+                        # retained XLIFF stays associated with job:<uuid>; the
+                        # artifact purge handles the retained-dir lifecycle.
                         continue
                     # Use the terminal timestamp first; fall back to creation
                     # time for legacy records that never got a completed_at.
@@ -460,6 +507,7 @@ async def create_translation_job(
     use_glossary: bool = Form(False),
     collection_id: str = Form(""),
     batch_size: int = Form(50),
+    keep_artifacts: bool = Form(False),
 ):
     """Submit a document for async translation.
 
@@ -467,6 +515,11 @@ async def create_translation_job(
     Files for the same user are processed sequentially.
     Poll GET /job/{job_id} for progress, cancel via POST /job/{job_id}/cancel,
     and download the result from GET /job/{job_id}/download when completed.
+
+    ``keep_artifacts=True`` (or the global DEBUG_KEEP_ARTIFACTS=1 env flag)
+    retains the job's temp dirs — including OKAPI/XLIFF working dirs — after
+    download so diagnostics tools can inspect them. Retained dirs are capped
+    (DEBUG_KEEP_ARTIFACTS_MAX_DIRS, default 20) and purged by age.
     """
     if not 10 <= batch_size <= 200:
         raise HTTPException(
@@ -513,6 +566,10 @@ async def create_translation_job(
         user_id=user_id,
     )
     job.metadata["temp_dir"] = str(temp_dir)
+    if keep_artifacts or retention_enabled():
+        # Recorded at creation so the Redis TTL exemption, orphan-sweep skip
+        # and download-time retention all apply consistently for this job.
+        job.metadata["keep_artifacts"] = True
     await translation_service.job_manager.repository.update(job)
     queue_position = await user_job_queue.enqueue(
         user_id, job.job_id, str(input_file), request_schema,
@@ -536,12 +593,16 @@ async def create_batch_translation_jobs(
     use_glossary: bool = Form(False),
     collection_id: str = Form(""),
     batch_size: int = Form(50),
+    keep_artifacts: bool = Form(False),
 ):
     """Submit multiple documents for async translation in one request.
 
     Each file gets its own job_id. Files for the same user are processed
     sequentially in queue order (per-user FIFO queue).
     Returns all job IDs immediately for individual polling/download.
+
+    ``keep_artifacts=True`` (or the global DEBUG_KEEP_ARTIFACTS=1 env flag)
+    retains each job's temp dirs after download (see POST /jobs).
     """
     if not 10 <= batch_size <= 200:
         raise HTTPException(
@@ -592,6 +653,8 @@ async def create_batch_translation_jobs(
             user_id=user_id,
         )
         job.metadata["temp_dir"] = str(temp_dir)
+        if keep_artifacts or retention_enabled():
+            job.metadata["keep_artifacts"] = True
         await translation_service.job_manager.repository.update(job)
 
         queue_position = await user_job_queue.enqueue(

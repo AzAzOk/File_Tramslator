@@ -36,6 +36,12 @@ class RedisJobRepository(JobRepository):
     _INDEX_KEY = "job:index"
     _TERMINAL_TTL = JOB_TTL_SECONDS
     _MAX_TTL = JOB_MAX_TTL_SECONDS
+    # Jobs retained for debug artifact analysis (metadata keep_artifacts=True)
+    # are exempt from the terminal TTL so the record outlives the retained
+    # dirs (whose max age defaults to 7 days) and keeps the job:<uuid>
+    # association for diagnostics. 14 days is a safety net only — the
+    # artifact purge bounds actual retention.
+    _RETAINED_TTL = 14 * 86400
 
     def __init__(self, redis: Redis | None = None):
         self._redis = redis
@@ -135,10 +141,17 @@ class RedisJobRepository(JobRepository):
     # _TERMINAL_TTL (7 days) replaces it once the job reaches a
     # terminal state so completed/failed/cancelled jobs are cleaned
     # up sooner.
+    #
+    # Jobs with metadata keep_artifacts=True (debug artifact retention)
+    # are exempt: they get _RETAINED_TTL so the job:<uuid> record stays
+    # available for diagnostics as long as (or longer than) the retained
+    # artifact dirs exist.
 
-    async def _set_ttl(self, key: str, status: str) -> None:
+    async def _set_ttl(self, key: str, status: str, job: Any | None = None) -> None:
         conn = await self._conn()
-        if self._is_terminal(status):
+        if job is not None and bool((job.metadata or {}).get("keep_artifacts")):
+            await conn.expire(key, self._RETAINED_TTL)
+        elif self._is_terminal(status):
             await conn.expire(key, self._TERMINAL_TTL)
         else:
             await conn.expire(key, self._MAX_TTL)
@@ -148,7 +161,7 @@ class RedisJobRepository(JobRepository):
         raw = self._serialize(job)
         key = self._job_key(job.job_id)
         await conn.set(key, raw)
-        await self._set_ttl(key, job.status.value)
+        await self._set_ttl(key, job.status.value, job)
         await self._add_to_index(job)
         return job
 
@@ -167,7 +180,7 @@ class RedisJobRepository(JobRepository):
         key = self._job_key(job.job_id)
 
         await conn.set(key, raw)
-        await self._set_ttl(key, job.status.value)
+        await self._set_ttl(key, job.status.value, job)
 
         return job
 
@@ -229,6 +242,9 @@ class RedisJobRepository(JobRepository):
                     await conn.zrem(self._INDEX_KEY, member)
                     continue
                 job = self._deserialize(raw)
+                if bool((job.metadata or {}).get("keep_artifacts")):
+                    # Retained for debug artifacts — managed by the artifact purge.
+                    continue
                 if job.is_terminal and (now - score) > max_age_seconds:
                     await conn.delete(self._job_key(member))
                     await conn.zrem(self._INDEX_KEY, member)

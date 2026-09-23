@@ -1,0 +1,602 @@
+{
+  "pair": "topo-report-2026",
+  "render": {
+    "original_pages": 33,
+    "translated_pages": 37,
+    "page_delta": 4,
+    "render_dir": "C:\\Users\\kulikovMA\\Desktop\\File_Translator_v2.0.0\\testdata\\topo-report-2026\\render"
+  },
+  "structure_scan": {
+    "original": {
+      "paragraphs": 2949,
+      "tables": 16,
+      "rows": 206,
+      "media": 39,
+      "text_elements": 2116,
+      "tabs": 258,
+      "pages": null,
+      "source_origin": "native"
+    },
+    "translated": {
+      "paragraphs": 2949,
+      "tables": 16,
+      "rows": 206,
+      "media": 39,
+      "text_elements": 1694,
+      "tabs": 258,
+      "pages": null,
+      "source_origin": "native"
+    },
+    "deltas": [
+      {
+        "name": "paragraphs",
+        "original": 2949,
+        "translated": 2949,
+        "kind": "topological",
+        "status": "ok",
+        "origin": "native"
+      },
+      {
+        "name": "tables",
+        "original": 16,
+        "translated": 16,
+        "kind": "topological",
+        "status": "ok",
+        "origin": "native"
+      },
+      {
+        "name": "rows",
+        "original": 206,
+        "translated": 206,
+        "kind": "topological",
+        "status": "ok",
+        "origin": "native"
+      },
+      {
+        "name": "media",
+        "original": 39,
+        "translated": 39,
+        "kind": "topological",
+        "status": "ok",
+        "origin": "native"
+      },
+      {
+        "name": "text_elements",
+        "original": 2116,
+        "translated": 1694,
+        "kind": "count",
+        "status": "delta",
+        "origin": "native"
+      },
+      {
+        "name": "tabs",
+        "original": 258,
+        "translated": 258,
+        "kind": "count",
+        "status": "ok",
+        "origin": "native"
+      }
+    ],
+    "hard_failures": [],
+    "warnings": [
+      "text_elements"
+    ]
+  },
+  "page_leaks": {
+    "total_findings": 30,
+    "findings": [
+      {
+        "page": 9,
+        "block": 2,
+        "line": 0,
+        "fragment": "- Закон Республики Казахстан «Об архитектурной, градостроительной и",
+        "cyrillic_chars": 57,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 1,
+        "fragment": "строительной деятельности в Республике Казахстан» (с изменениями и",
+        "cyrillic_chars": 57,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 2,
+        "fragment": "дополнениями на дату производства работ);",
+        "cyrillic_chars": 35,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 4,
+        "fragment": "Основные положения»;",
+        "cyrillic_chars": 17,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 6,
+        "fragment": "СП",
+        "cyrillic_chars": 2,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 7,
+        "fragment": "РК",
+        "cyrillic_chars": 2,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 9,
+        "fragment": "«Инженерно-геодезические",
+        "cyrillic_chars": 22,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 10,
+        "fragment": "изыскания",
+        "cyrillic_chars": 9,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 11,
+        "fragment": "для",
+        "cyrillic_chars": 3,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 12,
+        "fragment": "строительства»;",
+        "cyrillic_chars": 13,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 13,
+        "fragment": "- «Инструкция по топографической съемке в масштабах 1:5000, 1:2000, 1:1000 и",
+        "cyrillic_chars": 44,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 14,
+        "fragment": "1:500» (ГКИНП-02-033-82), согласованная и допущенная к применению",
+        "cyrillic_chars": 40,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 15,
+        "fragment": "уполномоченным органом по делам строительства и жилищно-коммунального",
+        "cyrillic_chars": 62,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 16,
+        "fragment": "хозяйства РК;",
+        "cyrillic_chars": 11,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 17,
+        "fragment": "- «Условные знаки для топографических планов масштабов 1:5000, 1:2000, 1:1000,",
+        "cyrillic_chars": 46,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 18,
+        "fragment": "1:500» (Астана, 2005 г.).",
+        "cyrillic_chars": 7,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 19,
+        "fragment": "- Правила по технике безопасности на топографо-геодезических работах",
+        "cyrillic_chars": 59,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 2,
+        "line": 20,
+        "fragment": "(ПТБ-88), М., Недра, 1991г.",
+        "cyrillic_chars": 10,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 3,
+        "line": 0,
+        "fragment": "Вид и объем выполненных работ:",
+        "cyrillic_chars": 25,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 5,
+        "line": 0,
+        "fragment": "П/П",
+        "cyrillic_chars": 2,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 9,
+        "block": 6,
+        "line": 0,
+        "fragment": "Наименования работ",
+        "cyrillic_chars": 17,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 30,
+        "block": 8,
+        "line": 5,
+        "fragment": "NTП RK 01-01-3.1(4.2)-2017. Loads and actions on buildings.",
+        "cyrillic_chars": 1,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 30,
+        "block": 11,
+        "line": 0,
+        "fragment": "Drilling will be performed using a self-propelled rig UРБ 2А2 for the installation of ground",
+        "cyrillic_chars": 3,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 37,
+        "block": 0,
+        "line": 0,
+        "fragment": "*4»ЛI0b. йт 0b. */• о",
+        "cyrillic_chars": 4,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 37,
+        "block": 0,
+        "line": 1,
+        "fragment": "jfc a,*КК",
+        "cyrillic_chars": 2,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 37,
+        "block": 0,
+        "line": 3,
+        "fragment": "»Л*Sw»l",
+        "cyrillic_chars": 1,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 37,
+        "block": 1,
+        "line": 0,
+        "fragment": "Verification laboratory: TOO \"Geostroinzyskаniya\"",
+        "cyrillic_chars": 1,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 37,
+        "block": 30,
+        "line": 0,
+        "fragment": "вю",
+        "cyrillic_chars": 2,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 37,
+        "block": 30,
+        "line": 1,
+        "fragment": "1Й 1887939 I",
+        "cyrillic_chars": 1,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": 37,
+        "block": 32,
+        "line": 0,
+        "fragment": "4| ЁШЩ",
+        "cyrillic_chars": 3,
+        "reason": "untranslated_fragment"
+      }
+    ]
+  },
+  "docx_leaks": {
+    "total_findings": 12,
+    "findings": [
+      {
+        "page": null,
+        "block": null,
+        "line": null,
+        "fragment": "- Закон Республики Казахстан «Об архитектурной, градостроительной и строительной деятельности в Республике Казахстан» (с изменениями и дополнениями на дату производства работ);",
+        "cyrillic_chars": 149,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": null,
+        "block": null,
+        "line": null,
+        "fragment": "- «Инструкция по топографической съемке в масштабах 1:5000, 1:2000, 1:1000 и 1:500» (ГКИНП-02-033-82), согласованная и допущенная к применению уполномоченным органом по делам строительства и жилищно-коммунального хозяйства РК;",
+        "cyrillic_chars": 157,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": null,
+        "block": null,
+        "line": null,
+        "fragment": "- «Условные знаки для топографических планов масштабов 1:5000, 1:2000, 1:1000, 1:500» (Астана, 2005 г.).",
+        "cyrillic_chars": 53,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": null,
+        "block": null,
+        "line": null,
+        "fragment": "- Правила по технике безопасности на топографо-геодезических работах (ПТБ-88), М., Недра, 1991г.",
+        "cyrillic_chars": 69,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": null,
+        "block": null,
+        "line": null,
+        "fragment": "Вид и объем выполненных работ:",
+        "cyrillic_chars": 25,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": null,
+        "block": null,
+        "line": null,
+        "fragment": "П/П",
+        "cyrillic_chars": 2,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": null,
+        "block": null,
+        "line": null,
+        "fragment": "Наименования работ",
+        "cyrillic_chars": 17,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": null,
+        "block": null,
+        "line": null,
+        "fragment": "NTП RK 01-01-3.1(4.2)-2017. Loads and actions on buildings.",
+        "cyrillic_chars": 1,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": null,
+        "block": null,
+        "line": null,
+        "fragment": "Drilling will be performed using a self-propelled rig UРБ 2А2 for the installation of ground markers on the territory of the oil refinery in the city of Shymkent.",
+        "cyrillic_chars": 3,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": null,
+        "block": null,
+        "line": null,
+        "fragment": "4| ЁШЩ",
+        "cyrillic_chars": 3,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": null,
+        "block": null,
+        "line": null,
+        "fragment": "Verification laboratory: TOO \"Geostroinzyskаniya\" (nameof the verification laboratory or the verification laboratory department)",
+        "cyrillic_chars": 1,
+        "reason": "untranslated_fragment"
+      },
+      {
+        "page": null,
+        "block": null,
+        "line": null,
+        "fragment": "вю 1Й 1887939 I",
+        "cyrillic_chars": 3,
+        "reason": "untranslated_fragment"
+      }
+    ]
+  },
+  "glue_findings": {
+    "total_findings": 8,
+    "findings": [
+      {
+        "page": null,
+        "paragraph": 361,
+        "block": null,
+        "line": null,
+        "token": "fortheproject",
+        "reason": "lowercase_concat",
+        "fragment": "The engineering and surveying investigations fortheproject\"Expansion of the production capacity of the Processing Complex for Paraffin Oils (PCOP) to 12 million tons per year\" were performed by the specialized surveying organization LLC \"Kosma\" based on a state license for conducting surveying activities No. 15021118, issued on December 4, 2015."
+      },
+      {
+        "page": null,
+        "paragraph": 365,
+        "block": null,
+        "line": null,
+        "token": "createan",
+        "reason": "lowercase_concat",
+        "fragment": "The primary purpose of the completed engineering and geodetic surveys is to createan up-to-dateengineeringtopographic planto a scale of 1:500 with a height section of the relief using continuous contours every 0.5 meters."
+      },
+      {
+        "page": null,
+        "paragraph": 365,
+        "block": null,
+        "line": null,
+        "token": "up-to-dateengineeringtopographic",
+        "reason": "lowercase_concat",
+        "fragment": "The primary purpose of the completed engineering and geodetic surveys is to createan up-to-dateengineeringtopographic planto a scale of 1:500 with a height section of the relief using continuous contours every 0.5 meters."
+      },
+      {
+        "page": null,
+        "paragraph": 390,
+        "block": null,
+        "line": null,
+        "token": "ofLLC",
+        "reason": "camel_boundary",
+        "fragment": "Expansion of the production capacity ofLLC\"PCOP\". Sheet 3 "
+      },
+      {
+        "page": null,
+        "paragraph": 706,
+        "block": null,
+        "line": null,
+        "token": "theinitial",
+        "reason": "lowercase_concat",
+        "fragment": "Mathematical processing and adjustment of the obtained satellite vectors were performed in the CREDO DAT software package. The coordinates of the points of the \"Arychny\" and \"Temny Bereg\" geodetic network in the conditional coordinate system of TOO \"PCOP\" and the Balticheightsystemwere usedas theinitial values. The root mean square error (RMSE) of the planimetric position of the survey network points was no more than ±4 mm, and the vertical position was no more than ±5 mm, which fully meets the strict tolerances of SP RK 1.02-101-2014."
+      },
+      {
+        "page": null,
+        "paragraph": 1600,
+        "block": null,
+        "line": null,
+        "token": "andSP",
+        "reason": "camel_boundary",
+        "fragment": "In order to ensure high quality of field and office surveys, as well as strict compliance with the normative tolerances of SN RK 1.02-04-2013 andSP RK 1.02-104-2013,at all stages of the work, LLC \"Kosma\""
+      },
+      {
+        "page": null,
+        "paragraph": 1730,
+        "block": null,
+        "line": null,
+        "token": "ofthesite",
+        "reason": "lowercase_concat",
+        "fragment": " · Instrumental checksurveying: Thegeodesy department of LLP \"Kosma\" performed an independent, random-sample instrumental check of the accuracy of the representation of the situation, building contours, and relief. The control measurements covered 15% of the total area ofthesite (approximately50hectares). The rootmean square error (RMSE) of the position of characteristic points and hidden contours with respect to the survey network points was"
+      },
+      {
+        "page": null,
+        "paragraph": 1862,
+        "block": null,
+        "line": null,
+        "token": "fortheproject",
+        "reason": "lowercase_concat",
+        "fragment": "The engineering and surveying investigations fortheproject\"Expansion of production capacity of the Shymkent Oil Refinery (PKOV) to 12 million tons per year\" were completed in full, in strict accordance with the requirements ofthe work program, the approved Technical Assignmentof the Customer, and the current legislation of the Republic of Kazakhstanin the field ofarchitecture and urban planning(SN RK 1.02-04-2013,SP RK 1.02-104-2013)."
+      }
+    ]
+  },
+  "b2_locate": {
+    "Вид и объем выполненных работ": [
+      {
+        "unit_id": "p_407",
+        "is_translated": true,
+        "source_snippet": "Вид и объем выполненных работ:",
+        "target_snippet": "Вид и объем выполненных работ:"
+      }
+    ],
+    "СН РК 1.02-04-2013": [
+      {
+        "unit_id": "p_402",
+        "is_translated": true,
+        "source_snippet": "- СН РК 1.02-04-2013 «Инженерно-геодезические изыскания для строительства. Основные положения»;",
+        "target_snippet": "- СН РК 1.02-04-2013 «Инженерно-геодезические изыскания для строительства. Основные положения»;"
+      },
+      {
+        "unit_id": "p_1600",
+        "is_translated": true,
+        "source_snippet": "С целью обеспечения высокого качества полевых и камеральных изысканий, а также строгого соблюдения нормативных допусков ",
+        "target_snippet": "In order to ensure high quality of field and office surveys, as well as strict compliance with the normative tolerances "
+      },
+      {
+        "unit_id": "p_1862",
+        "is_translated": true,
+        "source_snippet": "Инженерно-геодезические изыскания на объекте «Расширение производственных мощностей ПКОП до 12 млн. тонн в год» выполнен",
+        "target_snippet": "The engineering and surveying investigations fortheproject\"Expansion of production capacity of the Shymkent Oil Refinery"
+      },
+      {
+        "unit_id": "p_2164",
+        "is_translated": true,
+        "source_snippet": "3. СН РК 1.02-04-2013 «Инженерно-геодезические изыскания для строительства. Основные положения».",
+        "target_snippet": "3. SN RK 1.02-04-2013 \"Engineering and geodetic surveys for construction. General provisions.\""
+      }
+    ],
+    "ГКИНП": [
+      {
+        "unit_id": "p_404",
+        "is_translated": true,
+        "source_snippet": "- «Инструкция по топографической съемке в масштабах 1:5000, 1:2000, 1:1000 и 1:500» (ГКИНП-02-033-82), согласованная и д",
+        "target_snippet": "- «Инструкция по топографической съемке в масштабах 1:5000, 1:2000, 1:1000 и 1:500» (ГКИНП-02-033-82), согласованная и д"
+      },
+      {
+        "unit_id": "p_2170",
+        "is_translated": true,
+        "source_snippet": "6. ГКИНП-02-033-82 «Инструкция по топографической съемке в масштабах 1:5000, 1:2000, 1:1000 и 1:500», согласованная и до",
+        "target_snippet": "6. GKIMP-02-033-82 \"Instructions for topographic surveying at scales of 1:5000, 1:2000, 1:1000 and 1:500\", approved and "
+      }
+    ],
+    "Закон Республики Казахстан": [
+      {
+        "unit_id": "p_401",
+        "is_translated": true,
+        "source_snippet": "- Закон Республики Казахстан «Об архитектурной, градостроительной и строительной деятельности в Республике Казахстан» (с",
+        "target_snippet": "- Закон Республики Казахстан «Об архитектурной, градостроительной и строительной деятельности в Республике Казахстан» (с"
+      },
+      {
+        "unit_id": "p_2160",
+        "is_translated": true,
+        "source_snippet": "1. Закон Республики Казахстан «Об архитектурной, градостроительной и строительной деятельности в Республике Казахстан» (",
+        "target_snippet": "1. Law of the Republic of Kazakhstan \"On Architectural, Urban Planning and Construction Activities in the Republic of Ka"
+      },
+      {
+        "unit_id": "p_2162",
+        "is_translated": true,
+        "source_snippet": "2. Закон Республики Казахстан «О геодезии, картографии и пространственных данных» (с изменениями и дополнениями).",
+        "target_snippet": "2. Law of the Republic of Kazakhstan \"On Geodesy, Cartography and Spatial Data\" (with amendments and additions)."
+      }
+    ]
+  },
+  "b3_units_from_glue": {
+    "fortheproject": [
+      "p_361",
+      "p_1862"
+    ],
+    "createan": [
+      "p_365"
+    ],
+    "up-to-dateengineeringtopographic": [
+      "p_365"
+    ],
+    "ofLLC": [
+      "p_390"
+    ],
+    "theinitial": [
+      "p_706"
+    ],
+    "andSP": [
+      "p_1600"
+    ],
+    "ofthesite": [
+      "p_1730"
+    ]
+  }
+}

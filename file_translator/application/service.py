@@ -348,6 +348,14 @@ class TranslationService:
                 target_lang=target_lang.value,
             )
 
+            # Record the input origin for diagnostics: PDF inputs are marked
+            # `pdf_converted` by PdfTranslator (it converted PDF→DOCX before
+            # extraction); everything else defaults to `native` (DOCX/DOC are
+            # translated in place; .doc is first converted by LibreOffice but
+            # stays a DOCX-origin job). The scanners use this to distinguish
+            # genuine structure damage from conversion representation changes.
+            extracted_data.setdefault("source_origin", "native")
+
             # Register translator-internal temp dirs in job metadata so the
             # periodic orphan sweep never deletes a long-running job's working
             # files (docx_okapi_*, xlsx_*, oda_dwg_to_dxf_*) mid-translation.

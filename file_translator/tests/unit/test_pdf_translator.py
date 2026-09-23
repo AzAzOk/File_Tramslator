@@ -94,6 +94,7 @@ class TestExtract:
         # Return dict is passed through, plus temp-dir bookkeeping.
         assert result["pdf_convert_dir"] == str(called_dir)
         assert result["converted_docx"] == str(converted)
+        assert result["source_origin"] == "pdf_converted"
         assert result["temp_dir"] == "/tmp/docx_okapi_fake"
         assert Path(result["pdf_convert_dir"]).exists()
 

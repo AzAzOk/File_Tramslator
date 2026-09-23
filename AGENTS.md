@@ -333,6 +333,19 @@ Remaining (low priority / out of scope):
 
 **Fix**: Polling now runs `while (true)` until backend reports terminal state (completed/failed/cancelled). After 30 minutes, shows info toast "Задача выполняется дольше обычного" instead of false-fail.
 
+### Debug artifact retention (diagnostics group 7 — 2026-09-17)
+**Problem**: Post-download cleanup and the 1h orphan sweep delete job temp dirs (incl. OKAPI/XLIFF working dirs), so none of the diagnostics tools (unit locator, leak/glue scanners, render loop) can inspect a real job's artifacts after the fact — you cannot turn «страница 9 не переведена» into a root cause.
+
+**Fix**: New `file_translator/diagnostics/retention.py` (pure helpers, no FastAPI/Redis import):
+- `DEBUG_KEEP_ARTIFACTS=1` env (global) OR per-job `keep_artifacts` metadata (new `keep_artifacts` form param on `POST /jobs` and `POST /jobs/batch`) enables retention.
+- When enabled, `_cleanup_temp_dir(..., retain=True)` writes a `.diagnostics-retained` sidecar (JSON: `job_id` + `retained_at`) instead of deleting — this is the `job:<uuid>` ↔ retained XLIFF association.
+- Periodic orphan sweep skips dirs carrying the marker and calls `purge_debug_artifacts()`: cap `DEBUG_KEEP_ARTIFACTS_MAX_DIRS` (default 20) + age `DEBUG_KEEP_ARTIFACTS_MAX_AGE_SECONDS` (default 7d), newest-first on cap overflow; runs even when the env flag is off so previously retained dirs still age out.
+- Redis TTL exemption: `RedisJobRepository._set_ttl` uses `_RETAINED_TTL` (14d) when `metadata.keep_artifacts`; `cleanup_terminal()` and the app.py sweep safety-net skip retained jobs.
+- Default behavior unchanged when retention is off (existing sweep/TTL apply).
+
+**Key files**: `file_translator/diagnostics/retention.py`, `file_translator/presentation/api/app.py` (`_cleanup_temp_dir`/`_cleanup_job_temp_dirs` retain path, sweep skip+purge, `keep_artifacts` form flags), `file_translator/infrastructure/repositories/redis_job_repository.py`.
+**Tests**: `file_translator/tests/unit/test_debug_retention.py` (33 tests). Full suite: 393 passed / 5 skipped.
+
 <!-- BEGIN sqz-agents-guidance (auto-installed by sqz init; remove this block to disable) -->
 
 ## sqz — Token-Optimized CLI Output

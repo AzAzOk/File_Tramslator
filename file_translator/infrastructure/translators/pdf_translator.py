@@ -100,6 +100,11 @@ class PdfTranslator(DocumentTranslator):
         # through extracted["temp_dir"]).
         extracted["pdf_convert_dir"] = str(self._temp_dir)
         extracted["converted_docx"] = str(converted)
+        # Mark the input origin for diagnostics: this DOCX is the product of a
+        # PDF→DOCX conversion (First PDF), not a native DOCX. Count-only
+        # invariants (text nodes, tabs) are allowed to differ from `native`
+        # origins; topological invariants are not.
+        extracted["source_origin"] = "pdf_converted"
         return extracted
 
     def translate(self, extracted_data: dict, translations: dict[str, str],

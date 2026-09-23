@@ -1,0 +1,157 @@
+# Triage corpus catalog — structural-fidelity test pairs.
+#
+# Each entry records the source/translated paths, the structural profile
+# (computed by file_translator.diagnostics.structure_scanner.profile_docx),
+# rendered-page availability, and bug-journal references.
+#
+# bloat: documents above the bloat threshold (50,000 paragraphs) are flagged
+# as NOT eligible for full-pipeline regression runs — fixture-based
+# verification only.
+
+bloat_threshold_paragraphs: 50000
+
+pairs:
+
+  - case: topo-report-2026
+    display_name: "Отчет по Топографической съемке ШНПЗ 17.07.2026 (RU→EN)"
+    source_origin: native
+    has_translation: true
+    source_language: ru
+    target_language: en
+    paths:
+      original: topo-report-2026/original.docx
+      translated: topo-report-2026/translated.docx
+      source_pdf: null
+    profile_original:
+      paragraphs: 2949
+      tables: 16
+      rows: 206
+      media: 39
+      text_elements: 2116
+      tabs: 258
+      pages: null
+    profile_translated:
+      paragraphs: 2949
+      tables: 16
+      rows: 206
+      media: 39
+      text_elements: 1694
+      tabs: 258
+      pages: null
+    rendered_pages_available: false
+    bloat: false
+    bugs: [B1, B2, B3, B4, B5]
+    notes: |
+      Первая реальная пара (перевод выполнен пайплайном). Источник — PDF,
+      сконвертирован через First PDF 6.4 (origin=pdf_converted в реальной
+      работе; в каталоге хранится как исходный DOCX). Каркас (параграфы,
+      таблицы, строки, media) сохранён 1:1. Расхождения: text_elements
+      2116→1694 (−422), дрейф страниц при рендере, непереведённый блок на
+      стр. 9, склейки слов.
+
+  - case: 2026-001-goch
+    display_name: "2026-001-00-ГОЧС-009914-00 (конвертированный оригинал)"
+    source_origin: pdf_converted
+    has_translation: false
+    source_language: ru
+    target_language: null
+    paths:
+      original: 2026-001-goch/original.docx
+      translated: null
+      source_pdf: 2026-001-goch/original.pdf
+    profile_original:
+      paragraphs: 15739
+      tables: 93
+      rows: 1068
+      media: 27
+      text_elements: 6989
+      tabs: 1199
+      pages: null
+    profile_translated: null
+    rendered_pages_available: false
+    bloat: false
+    bugs: []
+    notes: |
+      Конвертированный из PDF оригинал (First PDF). Средний размер;
+      используется для кластерного анализа симптомов без полного перевода.
+
+  - case: 2026-001-igd
+    display_name: "2026-001-00-ИГД (конвертированный оригинал, объём в картинках)"
+    source_origin: pdf_converted
+    has_translation: false
+    source_language: ru
+    target_language: null
+    paths:
+      original: 2026-001-igd/original.docx
+      translated: null
+      source_pdf: 2026-001-igd/original.pdf
+    profile_original:
+      paragraphs: 8511
+      tables: 47
+      rows: 424
+      media: 38
+      text_elements: 2682
+      tabs: 210
+      pages: null
+    profile_translated: null
+    rendered_pages_available: false
+    bloat: false
+    bugs: []
+    notes: |
+      Крупный DOCX (29.9 MB) — объём в основном в embedded media (38),
+      текстовых элементов мало. Хороший стенд для проверки рендер-лупа
+      и сканеров на больших файлах.
+
+  - case: rp-goch-2025
+    display_name: "ИП2025.02-000-РП-ГОЧС (конвертированный оригинал, bloat)"
+    source_origin: pdf_converted
+    has_translation: false
+    source_language: ru
+    target_language: null
+    paths:
+      original: rp-goch-2025/original.docx
+      translated: null
+      source_pdf: rp-goch-2025/original.pdf
+    profile_original:
+      paragraphs: 167375
+      tables: 141
+      rows: 2322
+      media: 1601
+      text_elements: 7859
+      tabs: 1577
+      pages: null
+    profile_translated: null
+    rendered_pages_available: false
+    bloat: true
+    bugs: []
+    notes: |
+      BLOAT: 167,375 параграфов (> 50k). Конвертация из PDF размножила
+      абзацы; полный пайплайн прогонять нельзя (сотни тысяч trans-units,
+      минуты на XLIFF/Tikal). Только фикстурная проверка и точечный
+      рендер страниц. 1601 media — основной объём в изображениях.
+
+  - case: rp-gt-2025
+    display_name: "ИП2025.02-000-РП-ГТ (конвертированный оригинал)"
+    source_origin: pdf_converted
+    has_translation: false
+    source_language: ru
+    target_language: null
+    paths:
+      original: rp-gt-2025/original.docx
+      translated: null
+      source_pdf: rp-gt-2025/original.pdf
+    profile_original:
+      paragraphs: 5365
+      tables: 36
+      rows: 395
+      media: 13
+      text_elements: 2370
+      tabs: 234
+      pages: null
+    profile_translated: null
+    rendered_pages_available: false
+    bloat: false
+    bugs: []
+    notes: |
+      Малый конвертированный оригинал — самый дешёвый кандидат для
+      полного пайплайна в будущих проверках.
