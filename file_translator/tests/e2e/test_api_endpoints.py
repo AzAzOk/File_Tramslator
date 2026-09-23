@@ -1,5 +1,7 @@
 """E2E tests for File Translator API (requires running server)."""
 
+import socket
+
 import httpx
 import pytest
 from file_translator.infrastructure.translators.okapi_service import OkapiService
@@ -12,9 +14,27 @@ _tikal_available = pytest.mark.skipif(
 )
 
 
+def _api_server_reachable() -> bool:
+    """True when a server answers on the E2E base URL (localhost:8000)."""
+    try:
+        with socket.create_connection(("localhost", 8000), timeout=2):
+            return True
+    except OSError:
+        return False
+
+
+# Health check runs only when the API server is up; otherwise it is skipped
+# so the suite stays green on machines without the full service stack.
+_api_available = pytest.mark.skipif(
+    not _api_server_reachable(),
+    reason="API server not running at localhost:8000",
+)
+
+
 class TestAPIEndpoints:
     """End-to-end tests for API endpoints (requires running server at localhost:8000)."""
 
+    @_api_available
     @pytest.mark.asyncio
     async def test_health_check(self):
         async with httpx.AsyncClient() as client:
