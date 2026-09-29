@@ -57,6 +57,20 @@ Effective timeout = `max(FIRST_PDF_TIMEOUT, min(client deadline, FIRST_PDF_MAX_T
 A missing/invalid header falls back to `FIRST_PDF_TIMEOUT`. This lets big PDFs
 finish while still killing a genuinely hung First PDF process at the hard cap.
 
+**Recommended deployment value: `FIRST_PDF_TIMEOUT=180`.** The code default is
+120 s, but the size-based deadline the client sends via `X-Timeout-Seconds` is
+what should dominate: with a low floor (180 s) a stuck conversion releases the
+single-flight lock after ~3 minutes instead of 10, while large files still get
+their per-size deadline (up to `FIRST_PDF_MAX_TIMEOUT`). Example deadlines the
+client computes (sending `X-Timeout-Seconds`):
+
+| File size | Client deadline (5.5 s/MB, ×2 slack, cap 3600 s) |
+|-----------|--------------------------------------------------|
+| 1 MB      | ~90 s                                            |
+| 13 MB     | ~203 s (measured conversion ~165 s)              |
+| 100 MB    | ~1160 s                                          |
+| 200 MB    | ~1540 s                                          |
+
 ## Error responses (JSON `{ "code", "message" }`)
 
 | HTTP | code              | when                                                        |
@@ -73,7 +87,7 @@ finish while still killing a genuinely hung First PDF process at the hard cap.
 | `FIRST_PDF_EXE`     | `C:\Program Files (x86)\First PDF 6.4\First PDF.exe` | executable path (must point at First PDF) |
 | `FIRST_PDF_PORT`    | `8001`                                               | uvicorn port                              |
 | `FIRST_PDF_WORK_DIR`| `%TEMP%\first_pdf_work`                              | per-request temp dirs root                |
-| `FIRST_PDF_TIMEOUT` | `120` (seconds)                                      | default poll deadline for the output DOCX |
+| `FIRST_PDF_TIMEOUT` | `120` (code default); **`180` recommended on the VM** | default poll deadline for the output DOCX; per-size deadlines come from the client `X-Timeout-Seconds` header |
 | `FIRST_PDF_MAX_TIMEOUT` | `3600` (seconds)                                 | hard cap for the `X-Timeout-Seconds` header |
 
 ## Task Scheduler autostart recipe

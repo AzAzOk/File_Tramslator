@@ -80,6 +80,20 @@ class TestEstimateDeadline:
         raw = FLOOR_SECONDS + (size / MB) * SECONDS_PER_MB
         assert PdfToDocxConverter.estimate_deadline(size, 10_000) == pytest.approx(raw * 2.0)
 
+    def test_mid_size_covers_spike(self):
+        # Measured real conversion: 13 MB took ~165 s. The deadline for 13 MB
+        # must be >= 190 s so the size-derived watchdog never kills it early.
+        deadline = PdfToDocxConverter.estimate_deadline(13 * MB, 3600)
+        assert deadline >= 190.0
+        assert deadline < 260.0
+
+    def test_small_and_large_sizing(self):
+        small = PdfToDocxConverter.estimate_deadline(1 * MB, 3600)
+        assert 60.0 <= small <= 240.0
+        large = PdfToDocxConverter.estimate_deadline(100 * MB, 3600)
+        assert large > small
+        assert large < 3600
+
     def test_hard_cap(self):
         # ~2 GB PDF would estimate ~14800 s with slack → capped at 3600.
         size = 2000 * MB
