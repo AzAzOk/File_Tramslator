@@ -160,6 +160,25 @@ async def _check_file_size(file: UploadFile) -> None:
         )
 
 
+TERMINAL_DELETE_GRACE_SECONDS = 60
+
+
+async def _delete_job_after_grace(job_id: str,
+                                  grace: int = TERMINAL_DELETE_GRACE_SECONDS) -> None:
+    """Delete a terminal job's Redis record after a short grace.
+
+    The grace window lets a still-open page read the terminal status/reason
+    exactly once; afterwards the job exists nowhere (UI, Redis, temp storage).
+    Delete is idempotent — double scheduling is harmless.
+    """
+    try:
+        await asyncio.sleep(grace)
+        await translation_service.job_manager.delete_job(job_id)
+        logger.info(f"Terminal cleanup: deleted job {job_id} after grace")
+    except Exception as exc:
+        logger.warning(f"Terminal cleanup failed for {job_id}: {exc}")
+
+
 async def _run_translation_job(job_id: str, file_path: str, request: TranslationRequestSchema) -> None:
     """Run a translation job in the background.
 
@@ -210,6 +229,7 @@ async def _run_translation_job(job_id: str, file_path: str, request: Translation
                 _cleanup_job_temp_dirs(job, job_id)
             else:
                 _cleanup_temp_dir(temp_dir, job_id)
+            asyncio.create_task(_delete_job_after_grace(job_id))
     except Exception as e:
         logger.error(f"Background job {job_id} crashed: {e}", exc_info=True)
         try:
@@ -219,6 +239,7 @@ async def _run_translation_job(job_id: str, file_path: str, request: Translation
                 _cleanup_job_temp_dirs(job, job_id)
             else:
                 _cleanup_temp_dir(temp_dir, job_id)
+            asyncio.create_task(_delete_job_after_grace(job_id))
         except Exception:
             pass
 
@@ -1487,6 +1508,9 @@ async def cancel_job(
         if job.metadata.get("temp_dir") or job.metadata.get("temp_dirs"):
             _cleanup_job_temp_dirs(job, job_id)
             logger.info(f"Cleaned up temp dirs for cancelled job {job_id}")
+    # Remove the terminal record after a short grace (failed-job-handling):
+    # the open page can read the cancelled status once, then nothing lingers.
+    asyncio.create_task(_delete_job_after_grace(job_id))
     return _job_to_schema(job)
 
 

@@ -525,6 +525,11 @@
   </div>
 </div>
 
+<!-- ═══ Reload jobs banner (Model 1: jobs are server-owned) ═══ -->
+<div id="jobsReloadBanner" class="hidden fixed top-4 left-1/2 -translate-x-1/2 z-[60] max-w-[90vw] px-4 py-2 rounded-lg bg-[var(--c-surface-container-high)] border border-[var(--c-outline-variant)] shadow-lg text-sm text-[var(--c-on-surface)]">
+  Ваши задачи продолжают выполняться на сервере — статус обновится автоматически
+</div>
+
 <!-- ═══ Toast ═══ -->
 <div id="toastContainer" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2"></div>
 
@@ -1266,7 +1271,7 @@ function renderFiles() {
 }
 
 // Обновляет прогресс-бар и статус прямо в карточке файла
-function updateFileCardProgress(fileKey, status, pct, stage, errorText, queuePosition) {
+function updateFileCardProgress(fileKey, status, pct, stage, errorText, queuePosition, convLongWait) {
   const card = fileList.querySelector(`[data-file-key="${fileKey}"]`);
   if (!card) return;
 
@@ -1292,9 +1297,11 @@ function updateFileCardProgress(fileKey, status, pct, stage, errorText, queuePos
     if (pct != null && pct > 0) {
       fill.style.width = pct + '%';
       const stageName = (stage || '').toLowerCase();
-      if (stageName === 'conversion') {
-        statusText.textContent = `🔁 Конвертация PDF в DOCX... ${pct}%`;
-      } else if (stageName === 'validation' || stageName === 'extraction' || stageName === 'glossary') {
+if (stageName === 'conversion') {
+      statusText.textContent = convLongWait
+        ? 'Конвертация PDF дольше обычного — ждём ответа сервиса…'
+        : `🔁 Конвертация PDF в DOCX... ${pct}%`;
+    } else if (stageName === 'validation' || stageName === 'extraction' || stageName === 'glossary') {
         statusText.textContent = `📄 Извлечение текста... ${pct}%`;
       } else {
         statusText.textContent = `🔄 Перевод... ${pct}%`;
@@ -1455,6 +1462,7 @@ async function restoreActiveJobs() {
       if (!isCompleted) toPoll.push(job.job_id);
     }
     updateActiveJobsPanel();
+    updateRestoredBanner();
     for (const jobId of toPoll) {
       pollJobStatus(jobId);
     }
@@ -1479,7 +1487,7 @@ function updateJobStatusUI(jobId) {
 
   // Также обновляем карточку файла в fileList
   if (job.fileKey) {
-    updateFileCardProgress(job.fileKey, s, pct > 0 ? pct : null, job.stage, job.error, job.queuePosition);
+    updateFileCardProgress(job.fileKey, s, pct > 0 ? pct : null, job.stage, job.error, job.queuePosition, job.convLongWait);
   }
   
   if (s === 'pending') {
@@ -1525,15 +1533,12 @@ function updateJobStatusUI(jobId) {
     btn.addEventListener('click', () => downloadJob(jobId));
     el.appendChild(btn);
   } else if (s === 'failed' || s === 'cancelled') {
-    // Failed/cancelled — no fill
+    // Terminal jobs are removed instantly by pollJobStatus (failed-job-handling);
+    // this branch is defensive only — never print the error inline.
     if (progressFill) progressFill.style.width = '0%';
     const msg = document.createElement('span');
     msg.className = 'text-[var(--c-error)] font-semibold';
-    if (s === 'cancelled') {
-      msg.textContent = '❌ Отменён';
-    } else {
-      msg.textContent = `❌ Ошибка: ${friendlyError(job.error)}`;
-    }
+    msg.textContent = '';
     el.appendChild(msg);
   } else {
     if (progressFill) progressFill.style.width = '0%';
@@ -1581,6 +1586,53 @@ function waitFor(delayMs) {
   });
 }
 
+// Reload banner: jobs are server-owned, just tell the user they continue.
+function updateRestoredBanner() {
+  const b = document.getElementById('jobsReloadBanner');
+  if (!b) return;
+  const running = Object.values(activeJobs).some(
+    j => !['completed', 'failed', 'cancelled'].includes(j.status || '')
+  );
+  b.classList.toggle('hidden', !running);
+}
+
+// Remove the uploader file card (and hide the list when empty).
+function removeUploaderCard(fileKey) {
+  const fileListEl = document.getElementById('fileList');
+  if (!fileListEl) return;
+  if (fileKey) {
+    const card = fileListEl.querySelector(`[data-file-key="${fileKey}"]`);
+    if (card) card.remove();
+  }
+  if (!fileListEl.querySelector('[data-file-key]')) fileListEl.classList.add('hidden');
+}
+
+// Terminal jobs vanish from the UI instantly; the reason lives in the journal.
+function removeTerminalJob(jobId, kind, reasonText) {
+  const job = activeJobs[jobId];
+  const filename = (job && job.filename) || 'файл';
+  const fileKey = job ? job.fileKey : null;
+  const reason = reasonText || (job && job.error) || '';
+  const cancelled = kind === 'cancelled';
+  showToast(
+    cancelled ? `Задача отменена: ${filename}` : `Ошибка файла: ${filename}`,
+    cancelled ? 'close' : 'error',
+    true
+  );
+  if (job) {
+    addLog(
+      cancelled
+        ? `Отменена задача: ${filename}`
+        : `Ошибка: ${filename}${reason ? ' — ' + friendlyError(reason) : ''}`,
+      cancelled ? '' : 'text-[var(--c-error)]'
+    );
+  }
+  delete activeJobs[jobId];
+  if (fileKey) removeUploaderCard(fileKey);
+  updateActiveJobsPanel();
+  updateRestoredBanner();
+}
+
 async function pollJobStatus(jobId) {
   if (!activeJobs[jobId]) return;
   let retries = 0;
@@ -1598,6 +1650,11 @@ async function pollJobStatus(jobId) {
       const resp = await authFetch(`/job/${jobId}`);
       if (!resp.ok) {
         if (!activeJobs[jobId]) return;
+        // Record already cleaned server-side (grace delete) — terminal state.
+        if (resp.status === 404) {
+          removeTerminalJob(jobId, 'failed', 'запись задачи удалена с сервера');
+          return;
+        }
         retries++;
         if (retries > maxRetries) {
           activeJobs[jobId].status = 'failed';
@@ -1621,6 +1678,19 @@ async function pollJobStatus(jobId) {
       activeJobs[jobId].progress = data.progress;
       activeJobs[jobId].error = data.error_message;
       activeJobs[jobId].stage = data.current_stage;
+      
+      // Conversion-latency tracking: if a job stays in conversion far past a
+      // normal deadline, surface it instead of a frozen bar.
+      if (data.current_stage === 'conversion') {
+        if (!activeJobs[jobId].convWarnAt) activeJobs[jobId].convWarnAt = Date.now();
+        else if (!activeJobs[jobId].convLongWait && (Date.now() - activeJobs[jobId].convWarnAt) > 180000) {
+          activeJobs[jobId].convLongWait = true;
+          showToast('Конвертация PDF дольше обычного — ждём ответа сервиса', 'info', false);
+        }
+      } else {
+        activeJobs[jobId].convWarnAt = null;
+        activeJobs[jobId].convLongWait = false;
+      }
       activeJobs[jobId].queuePosition = data.queue_position;
       
       // Сохраняем путь к результату при завершении
@@ -1633,14 +1703,16 @@ async function pollJobStatus(jobId) {
       // Останавливаем polling когда job завершён или завершился ошибкой
       if (['completed', 'failed', 'cancelled'].includes(activeJobs[jobId].status)) {
         activeJobs[jobId].completedAt = Date.now();
+        updateRestoredBanner();
         // Показываем уведомление если успешно завершён
         if (data.status === 'completed') {
           setTimeout(() => {
             showToast('✅ Перевод завершён! Нажмите "Скачать" для загрузки.', 'check_circle');
             addLog('Файл готов к скачиванию!', 'text-[var(--c-status-success)] font-semibold');
           }, 500);
-        } else if (data.status === 'failed') {
-          showToast('❌ Ошибка перевода: ' + friendlyError(data.error_message), 'error', true);
+        } else {
+          // Failed/cancelled: remove instantly, reason to journal, toast w/ name only.
+          removeTerminalJob(jobId, data.status, data.error_message);
         }
         return;
       }
