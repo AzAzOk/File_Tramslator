@@ -342,7 +342,11 @@ class TranslationService:
                     job_id, JobStage.CONVERSION, batch_index=0, total_batches=conv_deadline,
                 )
 
-            extracted_data = translator.extract(
+            # Blocking translator work (PDF conversion HTTP, Tikal CLI, XLIFF
+            # merge) is offloaded to the executor so the async event loop stays
+            # responsive to health/frontend/other users (fix-service-concurrency).
+            extracted_data = await asyncio.to_thread(
+                translator.extract,
                 input_path,
                 source_lang=source_lang.value,
                 target_lang=target_lang.value,
@@ -430,8 +434,18 @@ class TranslationService:
                     detected = _detect_lang(u.original_text)
                     if detected is None or detected == source_lang.value:
                         filtered.append(u)
-                    else:
+                    elif source_lang.value == "ru" and not re.search(
+                        r"[\u0400-\u04ff]", u.original_text
+                    ):
+                        # Pure non-Cyrillic unit (technical caption, product
+                        # code, already-English line): nothing to translate.
                         skipped_ids.add(u.id)
+                    else:
+                        # Detection says a different language but the unit still
+                        # carries the source script — translate it anyway.
+                        # Skipping such units was the root cause of deterministic
+                        # untranslated leftovers in real documents.
+                        filtered.append(u)
                 if skipped_ids:
                     logger.info(
                         f"FILTER_BY_SOURCE: server-side filter skipped "
@@ -741,7 +755,8 @@ class TranslationService:
             
             # Step 8: Apply translations back to document
             logger.info(f"Applying {len(all_translations)} translations")
-            translated_data = translator.translate(
+            translated_data = await asyncio.to_thread(
+                translator.translate,
                 extracted_data, all_translations,
             )
             
@@ -750,8 +765,68 @@ class TranslationService:
             output_path = input_path.parent / f"{input_path.stem}_translated{output_suffix}"
             
             try:
-                saved_path = translator.save(translated_data, output_path)
+                saved_path = await asyncio.to_thread(translator.save, translated_data, output_path)
                 output_file = str(saved_path)
+
+                # ── Post-merge integrity gate (fix-translation-fidelity) ──
+                # Verifies no content loss / numeric drift / mixed units and
+                # fails the job loudly when critical findings survive. The gate
+                # itself is guarded: a gate failure must never break an
+                # otherwise-good save.
+                try:
+                    import os
+                    from file_translator.application.integrity import run_integrity_check
+                    integrity = await asyncio.to_thread(
+                        run_integrity_check, input_path, Path(output_file)
+                    )
+                    integrity_dict = integrity.to_dict()
+                    await self.journal_service.log_info(
+                        JournalStage.SAVE,
+                        f"Integrity gate: loss={len(integrity.loss_paragraphs)} "
+                        f"numeric_drift={integrity.numeric_mismatch_count} "
+                        f"mixed={len(integrity.mixed_units)}",
+                        filename=filename,
+                        details=integrity_dict,
+                    )
+                    if (getattr(request, "keep_artifacts", False)
+                            or os.environ.get("DEBUG_KEEP_ARTIFACTS") == "1"):
+                        try:
+                            report_path = (Path(__file__).resolve().parent.parent.parent
+                                           / "logs" / f"integrity_{job_id}.json")
+                            report_path.parent.mkdir(parents=True, exist_ok=True)
+                            import json
+                            report_path.write_text(
+                                json.dumps(integrity_dict, ensure_ascii=False, indent=2),
+                                encoding="utf-8",
+                            )
+                        except Exception as report_exc:  # pragma: no cover
+                            logger.warning("Integrity report write failed: %s", report_exc)
+                    if integrity.critical:
+                        problems = []
+                        if integrity.loss_paragraphs:
+                            problems.append(
+                                f"потеряно абзацев: {len(integrity.loss_paragraphs)}"
+                            )
+                        if integrity.ref_mismatch_count:
+                            problems.append(
+                                f"дрейф юридических номеров: {integrity.ref_mismatch_count}"
+                            )
+                        msg = "Integrity gate: " + "; ".join(problems)
+                        logger.error(msg)
+                        await self.journal_service.log_error(
+                            JournalStage.FAILED, msg,
+                            filename=filename, details=integrity_dict,
+                        )
+                        if job_id:
+                            await self.job_manager.fail_job(job_id, msg)
+                        return TranslationResponseSchema(
+                            success=False,
+                            errors=[msg],
+                            duration_seconds=time.time() - start_time,
+                            job_id=job_id,
+                        )
+                except Exception as gate_error:
+                    logger.warning(f"Integrity gate failed to run (continuing): {gate_error}")
 
                 await self.job_manager.update_progress(job_id, JobStage.SAVE)
                 

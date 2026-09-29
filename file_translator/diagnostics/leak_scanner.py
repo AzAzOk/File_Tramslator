@@ -179,3 +179,50 @@ def scan_docx_leaks(docx_path: Path | str,
         except KeyError:
             logger.warning("No word/document.xml in %s", docx_path)
     return [f.to_dict() for f in findings]
+
+
+def find_leftover_source_language(
+    text: str,
+    whitelist_prefixes: Iterable[str] | None = None,
+    min_cyrillic: int = 4,
+) -> dict[str, Any] | None:
+    """Return a finding dict if ``text`` contains leftover source-language
+    (Cyrillic) fragments beyond the normative whitelist.
+
+    Used as an importable per-unit detector by the pipeline's completeness
+    gate (``openai_provider``) and the post-merge integrity gate. Returns
+    ``None`` when the text is clean or is an intentional whitelisted
+    normative reference. ``min_cyrillic`` filters out 1-3 character noise
+    (single letters, «ОНХП»-style brand marks).
+    """
+    finding = _classify_fragment(text, whitelist_prefixes)
+    if finding is None:
+        return None
+    if finding.cyrillic_chars < min_cyrillic:
+        return None
+    return finding.to_dict()
+
+
+_CYRILLIC_RUN_RE = re.compile(r"[\u0400-\u04ff]{6,}")
+_LATIN_WORD_RE = re.compile(r"[A-Za-z]{3,}")
+
+
+def is_mixed_unit(
+    text: str,
+    whitelist_prefixes: Iterable[str] | None = None,
+    min_run: int = 6,
+) -> bool:
+    """Return True if ``text`` mixes target-language (Latin) words with a
+    leftover source-language (Cyrillic) run of at least ``min_run`` letters.
+
+    This is the «The project предусматривает максимально…» case — partially
+    translated units that must be retried. A whitelisted normative reference
+    (e.g. «СН РК 1.02-04-2013») is never treated as mixed. Short brand marks
+    like «ПАО «ОНХП»» (run < ``min_run``) are not considered mixed.
+    """
+    if not _CYRILLIC_RUN_RE.search(text):
+        return False
+    if not _LATIN_WORD_RE.search(text):
+        return False
+    finding = _classify_fragment(text, whitelist_prefixes)
+    return finding is not None

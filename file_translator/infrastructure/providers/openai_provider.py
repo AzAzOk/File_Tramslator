@@ -14,6 +14,13 @@ from file_translator.domain.interfaces import TranslationProvider
 from file_translator.domain.models import LanguageCode, TextUnit, TranslationBatch, TranslationMode, TranslationStyle
 from file_translator.domain.errors import ModelUnavailableError, TranslationError
 from file_translator.infrastructure.config import LLMConfig, AppConfig, DELIVERY_RATIO_THRESHOLD, MAX_SPLIT_DEPTH
+from file_translator.diagnostics.numeric_fidelity import (
+    protect_numerics,
+    restore_numerics,
+    verify_numeric,
+    repair_numeric,
+)
+from file_translator.diagnostics.leak_scanner import find_leftover_source_language
 
 logger = logging.getLogger(__name__)
 
@@ -161,9 +168,23 @@ class OpenAITranslationProvider(TranslationProvider):
             '<s1>' in (getattr(u, 'original_text', '') or '')
             for u in batch.text_units
         )
-        
+
+        # Numeric/normative-reference fidelity (fix-translation-fidelity):
+        # protect numeric tokens per unit with placeholders so the model cannot
+        # corrupt numbers/dates/designations; restore them when parsing below.
+        protect_map: dict[str, tuple[str, list]] = {}
+        for u in batch.text_units:
+            try:
+                protect_map[u.id] = protect_numerics(u.original_text or "")
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Numeric protection failed for %s: %s", u.id, exc)
+                protect_map[u.id] = (u.original_text or "", [])
+
         # Build the prompt for the LLM
-        prompt = self._build_prompt(batch, source_lang, target_lang, translation_style, translation_mode)
+        prompt = self._build_prompt(
+            batch, source_lang, target_lang, translation_style,
+            translation_mode, protect_map=protect_map,
+        )
         
         # Prepare API request
         api_request = {
@@ -326,8 +347,9 @@ class OpenAITranslationProvider(TranslationProvider):
                 if not isinstance(translations, list):
                     raise TranslationError(reason="Response 'translations' is not a list")
                 
-                # Validate each translation item
-                result = []
+                # Validate each translation item (raw — numeric/completeness
+                # post-processing happens after the coverage check below).
+                raw_result = []
                 for item in translations:
                     if not isinstance(item, dict):
                         continue
@@ -336,25 +358,25 @@ class OpenAITranslationProvider(TranslationProvider):
                     translated_text = str(item.get("text", ""))
                     
                     if text_unit_id and translated_text:
-                        result.append({
+                        raw_result.append({
                             "id": text_unit_id,
                             "text": translated_text,
                         })
                 
                 # Log if any items were skipped during validation
-                skipped_count = len(translations) - len(result)
+                skipped_count = len(translations) - len(raw_result)
                 if skipped_count > 0:
                     logger.warning(f"Some translation items skipped in batch {batch.sequence_id}: {skipped_count}/{len(translations)} items lost (possibly empty text or invalid format)")
                 
                 # Check for incomplete response — LLM skipped some units
                 expected_count = len(batch.text_units)
-                if len(result) < expected_count:
-                    delivered_ratio = len(result) / expected_count if expected_count > 0 else 1.0
-                    delivered_ids = {r["id"] for r in result}
+                if len(raw_result) < expected_count:
+                    delivered_ratio = len(raw_result) / expected_count if expected_count > 0 else 1.0
+                    delivered_ids = {r["id"] for r in raw_result}
                     missing_ids = [u.id for u in batch.text_units if u.id not in delivered_ids]
                     logger.warning(
                         f"Incomplete response for batch {batch.sequence_id}: "
-                        f"{len(result)}/{expected_count} units delivered ({delivered_ratio:.0%}). "
+                        f"{len(raw_result)}/{expected_count} units delivered ({delivered_ratio:.0%}). "
                         f"Missing unit IDs: {missing_ids}"
                     )
                     if delivered_ratio < DELIVERY_RATIO_THRESHOLD and expected_count > 1:
@@ -363,6 +385,140 @@ class OpenAITranslationProvider(TranslationProvider):
                             f"{batch.sequence_id} and retrying..."
                         )
                         return await self._translate_with_split(batch_data, _split_depth + 1)
+                    elif missing_ids and _split_depth < MAX_SPLIT_DEPTH:
+                        # Coverage is OK but the model silently omitted some
+                        # units (the same ones every run). Retry ONLY them as a
+                        # mini-batch instead of dropping them untranslated.
+                        retry_units = [u for u in batch.text_units if u.id in missing_ids]
+                        retry_batch = TranslationBatch(
+                            sequence_id=batch.sequence_id * 1000 + _split_depth + 1,
+                            text_units=retry_units,
+                            source_language=batch.source_language,
+                            target_language=batch.target_language,
+                            translation_style=batch.translation_style,
+                            translation_mode=batch.translation_mode,
+                            use_glossary=batch.use_glossary,
+                            glossary_id=batch.glossary_id,
+                        )
+                        retry_data = {**batch_data, "batch": retry_batch}
+                        try:
+                            retry_result = await self.translate_batch(
+                                retry_data, _split_depth=_split_depth + 1
+                            )
+                        except TranslationError as exc:
+                            logger.warning("Missing-units retry failed: %s", exc)
+                            retry_result = []
+                        if retry_data.get("_integrity_missing"):
+                            batch_data.setdefault("_integrity_missing", []).extend(
+                                retry_data["_integrity_missing"]
+                            )
+                        raw_map = {r["id"]: r["text"] for r in raw_result}
+                        for r in retry_result:
+                            raw_map[r["id"]] = r["text"]
+                        raw_result = [{"id": k, "text": v} for k, v in raw_map.items()]
+                        logger.info(
+                            f"Missing-units retry for batch {batch.sequence_id}: "
+                            f"got {len(retry_result)}/{len(missing_ids)} additional unit(s)"
+                        )
+                
+                # ── Integrity post-processing (fix-translation-fidelity) ──
+                # Restore numeric placeholders, verify/repair drift, and reject
+                # partially translated (mixed language) units so they get
+                # retried. Units that stay broken after bounded retries fall
+                # back to source text (no content loss) and are recorded.
+                unit_by_id = {u.id: u for u in batch.text_units}
+                
+                def _post_process(unit_id: str, text: str) -> str | None:
+                    unit = unit_by_id.get(unit_id)
+                    if unit is None:
+                        return text
+                    original = unit.original_text or ""
+                    _protected, tokens = protect_map.get(unit_id, (original, []))
+                    if tokens:
+                        text = restore_numerics(text, tokens)
+                        mismatches = verify_numeric(original, text)
+                        if mismatches:
+                            text, unresolved = repair_numeric(text, mismatches, tokens)
+                            if unresolved:
+                                return None
+                    if source_lang == LanguageCode.RU:
+                        try:
+                            # Flag ANY leftover source-language — both mixed
+                            # («The project предусматривает…») and fully
+                            # untranslated Russian units — so they get retried.
+                            if find_leftover_source_language(text):
+                                return None
+                        except Exception as exc:  # pragma: no cover - defensive
+                            logger.warning("Completeness scan failed for %s: %s", unit_id, exc)
+                    return text
+                
+                result = []
+                incomplete_ids: list[str] = []
+                for r in raw_result:
+                    final = _post_process(r["id"], r["text"])
+                    if final is None:
+                        incomplete_ids.append(r["id"])
+                    else:
+                        result.append({"id": r["id"], "text": final})
+                
+                if incomplete_ids:
+                    retry_ids = set(incomplete_ids)
+                    retry_units = [u for u in batch.text_units if u.id in retry_ids]
+                    logger.warning(
+                        f"Integrity retry for batch {batch.sequence_id}: "
+                        f"{len(retry_units)} unit(s) need re-translation "
+                        f"(numeric/completeness)"
+                    )
+                    if retry_units and _split_depth < MAX_SPLIT_DEPTH:
+                        retry_batch = TranslationBatch(
+                            sequence_id=batch.sequence_id * 1000 + _split_depth + 1,
+                            text_units=retry_units,
+                            source_language=batch.source_language,
+                            target_language=batch.target_language,
+                            translation_style=batch.translation_style,
+                            translation_mode=batch.translation_mode,
+                            use_glossary=batch.use_glossary,
+                            glossary_id=batch.glossary_id,
+                        )
+                        retry_data = {**batch_data, "batch": retry_batch}
+                        try:
+                            retry_result = await self.translate_batch(
+                                retry_data, _split_depth=_split_depth + 1
+                            )
+                        except TranslationError as exc:
+                            logger.warning("Integrity retry failed: %s", exc)
+                            retry_result = []
+                        # Bubble up integrity findings recorded in nested retries.
+                        if retry_data.get("_integrity_missing"):
+                            batch_data.setdefault("_integrity_missing", []).extend(
+                                retry_data["_integrity_missing"]
+                            )
+                        retry_map = {r["id"]: r["text"] for r in retry_result}
+                        for r in result:
+                            if r["id"] in retry_map:
+                                r["text"] = retry_map[r["id"]]
+                        result_ids = {r["id"] for r in result}
+                        for rid in retry_ids:
+                            if rid in retry_map and rid not in result_ids:
+                                result.append({"id": rid, "text": retry_map[rid]})
+                        still_missing = retry_ids - {r["id"] for r in result}
+                    else:
+                        still_missing = set(retry_ids)
+                    
+                    # Source fallback for anything that could not be repaired —
+                    # guarantees no content loss while recording the finding.
+                    for rid in sorted(still_missing):
+                        unit = unit_by_id.get(rid)
+                        if unit is None:
+                            continue
+                        logger.warning(
+                            f"Unit {rid} kept as source fallback after integrity "
+                            f"retries (numeric/completeness)"
+                        )
+                        result.append({"id": rid, "text": unit.original_text or ""})
+                        batch_data.setdefault("_integrity_missing", []).append(
+                            {"unit_id": rid, "reason": "numeric_or_completeness"}
+                        )
                 
                 logger.info(f"Translation completed for {len(result)} units")
                 return result
@@ -425,7 +581,8 @@ class OpenAITranslationProvider(TranslationProvider):
     
     def _build_prompt(self, batch: TranslationBatch, source_lang: LanguageCode,
                       target_lang: LanguageCode, translation_style: TranslationStyle = TranslationStyle.TECHNICAL,
-                      translation_mode: TranslationMode = TranslationMode.FULL) -> str:
+                      translation_mode: TranslationMode = TranslationMode.FULL,
+                      protect_map: dict[str, tuple[str, list]] | None = None) -> str:
         """Build the prompt for LLM translation."""
         
         source_name = _LANGUAGE_NAMES.get(source_lang, source_lang.value.upper())
@@ -443,7 +600,10 @@ class OpenAITranslationProvider(TranslationProvider):
         # Format text units for the prompt
         text_items = []
         for i, unit in enumerate(batch.text_units):
-            item = f'{{"id": "{unit.id}", "text": "{self._escape_for_prompt(unit.original_text)}"}}'
+            protected_text, _tokens = (protect_map or {}).get(
+                unit.id, (unit.original_text, [])
+            )
+            item = f'{{"id": "{unit.id}", "text": "{self._escape_for_prompt(protected_text)}"}}'
             if unit.context:
                 item += f', "context": "{self._escape_for_prompt(unit.context)}"'
             text_items.append(item)

@@ -176,11 +176,20 @@ class TestSaveXliff:
         tree = ET.parse(str(xlf))
         root = tree.getroot()
         targets = root.findall(f".//{{{NS_XLIFF}}}target")
-        all_empty = all(
-            "".join(t.itertext()).strip() == ""
-            for t in targets
+        # Loss-prevention: units with no translation keep a source-fallback
+        # target (non-empty, equal to source) — content must never vanish.
+        assert len(targets) > 0
+        all_filled = all(
+            "".join(t.itertext()).strip() != "" for t in targets
         )
-        assert all_empty
+        assert all_filled
+        for unit in root.findall(f".//{{{NS_XLIFF}}}trans-unit"):
+            source = unit.find(f"{{{NS_XLIFF}}}source")
+            target = unit.find(f"{{{NS_XLIFF}}}target")
+            if unit.get("id") == "nonexistent":
+                continue
+            assert target is not None
+            assert "".join(target.itertext()).strip() == "".join(source.itertext()).strip()
 
     def test_skips_empty_translations(self, tmp_path):
         xlf = tmp_path / "test.xlf"
@@ -192,7 +201,8 @@ class TestSaveXliff:
         root = tree.getroot()
         target = root.find(f".//{{{NS_XLIFF}}}target")
         assert target is not None
-        assert (target.text or "").strip() == ""
+        # Empty translation → loss-prevention fills target with source text.
+        assert (target.text or "").strip() != ""
 
     def test_preserves_inline_codes_in_target(self, tmp_path):
         """Target should have same inline code structure as source."""

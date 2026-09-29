@@ -393,6 +393,41 @@ class OkapiService:
         if updated_count == 0:
             logger.warning(f"No translations applied to XLIFF (0/{len(translations)} units matched)")
 
+        # Loss prevention (fix-translation-fidelity): any trans-unit left with an
+        # empty/missing target (skipped by FILTER_BY_SOURCE, LLM returned nothing,
+        # or dropped during save) gets a target identical to its source so the
+        # merged document never loses the segment. Untranslated-but-present is
+        # better than absent; the integrity gate reports such units afterwards.
+        _ns = f"{{{NS_XLIFF}}}"
+        fallback_count = 0
+        for trans_unit in root.iter(f"{_ns}trans-unit"):
+            source_elem = trans_unit.find(f"{_ns}source")
+            if source_elem is None:
+                continue
+            target_elem = trans_unit.find(f"{_ns}target")
+            has_text = False
+            if target_elem is not None:
+                has_text = bool("".join(target_elem.itertext()).strip())
+            if has_text:
+                continue
+            if target_elem is None:
+                idx = list(trans_unit).index(source_elem)
+                target_elem = ET.SubElement(trans_unit, f"{_ns}target")
+                trans_unit.remove(target_elem)
+                trans_unit.insert(idx + 1, target_elem)
+            for child in list(target_elem):
+                target_elem.remove(child)
+            target_elem.text = source_elem.text if source_elem.text else None
+            for child in source_elem:
+                target_elem.append(copy.deepcopy(child))
+            fallback_count += 1
+
+        if fallback_count:
+            logger.warning(
+                f"XLIFF loss-prevention: wrote source-fallback targets for "
+                f"{fallback_count} unit(s) with empty/missing target"
+            )
+
         save_path = output_path or xliff_path
         tree.write(str(save_path), xml_declaration=True, encoding="UTF-8")
 
