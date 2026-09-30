@@ -326,6 +326,16 @@ class FeedbackCreateSchema(BaseModel):
     message: str = Field(..., min_length=1, max_length=5000, description="Feedback text")
 
 
+class FeedbackAttachmentSchema(BaseModel):
+    """Metadata for one support-message attachment (bytes served separately)."""
+    id: int
+    feedback_id: int
+    position: int
+    filename: str
+    content_type: str
+    size: int
+
+
 class FeedbackEntrySchema(BaseModel):
     """Schema for a feedback entry."""
     id: int
@@ -333,3 +343,4 @@ class FeedbackEntrySchema(BaseModel):
     username: str
     message: str
     created_at: str
+    attachments: list[FeedbackAttachmentSchema] = []

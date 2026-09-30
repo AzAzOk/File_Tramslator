@@ -147,6 +147,66 @@
     color: var(--c-secondary);
     font-size: 14px;
   }
+  .btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    background: var(--c-surface);
+    border: 1px solid var(--c-outline-variant);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 18px;
+    transition: border-color .15s;
+  }
+  .btn-ghost:hover { border-color: var(--c-primary); }
+  .attach-add {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    background: var(--c-primary-container);
+    color: var(--c-on-primary-container);
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: opacity .15s, transform .1s;
+    box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  }
+  .attach-add .material-symbols-outlined { font-size: 22px; }
+  .attach-add:hover { opacity: .85; }
+  .attach-add:active { transform: scale(.95); }
+  #attachChips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .attach-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--c-surface);
+    border: 1px solid var(--c-outline-variant);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: var(--c-on-surface);
+  }
+  .attach-chip button {
+    border: none;
+    background: transparent;
+    color: var(--c-error);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 2px;
+  }
+  #attachHint { font-size: 12px; color: var(--c-error); margin-top: 4px; }
+  .attach-thumb {
+    max-height: 80px;
+    border-radius: 6px;
+    margin: 6px 8px 0 0;
+    border: 1px solid var(--c-outline-variant);
+    cursor: pointer;
+    vertical-align: top;
+  }
   footer {
     text-align: center;
     padding: 24px;
@@ -177,8 +237,12 @@
     <h3><span class="material-symbols-outlined" aria-hidden="true">forum</span> Написать сообщение</h3>
     <div id="notAuth" class="empty">Для отправки сообщения необходимо <a href="/" style="color:var(--c-primary);">войти в систему</a>.</div>
     <form id="feedbackForm" style="display:none;">
-      <textarea id="msgInput" placeholder="Опишите ваше предложение, замечание или жалобу..." maxlength="5000"></textarea>
+      <textarea id="msgInput" placeholder="Опишите ваше предложение, замечание или жалобу...  (Ctrl+V — вставить скриншот, можно и перетащить файл)" maxlength="5000"></textarea>
+      <input type="file" id="attachInput" accept="image/png,image/jpeg,image/webp,image/gif" multiple style="display:none;">
+      <div id="attachChips"></div>
+      <p id="attachHint"></p>
       <div style="display:flex;align-items:center;gap:12px;margin-top:12px;">
+        <button type="button" id="attachBtn" class="attach-add" title="Прикрепить изображения (PNG/JPG/WebP/GIF, до 10 шт, до 1 МБ)"><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
         <button type="submit" class="btn"><span class="material-symbols-outlined" style="font-size:18px;">send</span> Отправить</button>
         <span id="charCount" class="font-mono-sm" style="font-size:12px;color:var(--c-secondary);">0 / 5000</span>
       </div>
@@ -191,6 +255,21 @@
     <h3><span class="material-symbols-outlined" aria-hidden="true">history</span> Все сообщения</h3>
     <div id="messagesList"></div>
   </div>
+
+  <details class="card" id="knownNonBugs">
+    <summary style="cursor:pointer;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;">Известные «не-баги» (для тестирования)</summary>
+    <ul style="margin:12px 0 0;padding-left:20px;color:var(--c-on-surface-variant);font-size:14px;line-height:1.7;">
+      <li>При переводе число строк/страниц может вырасти, и текст в документе «съезжает» вниз — это следствие разной длины переведённого текста.</li>
+      <li>Таблицы могут стать выше/шире — строки подстраиваются под переведённый текст (авто-высота).</li>
+      <li>Служебные штампы, номера страниц и обозначения (например «2026-001-00-ГОЧС-…») могут оставаться без изменений, в таком случае нужно использовать "Глоссарий".</li>
+      <li>Названия нормативных документов (СН РК, ГОСТ, ГКИНП, СП РК и т.п.) сохраняются на исходном языке, в таком случае нужно использовать "Глоссарий".</li>
+      <!-- <li>Артефакты конвертации PDF→DOCX (сервис First PDF): возможные табы, переносы, дубли подписей — это не баг перевода.</li> -->
+      <!-- <li>Перевод большого документа (90+ страниц) занимает минуты — скорость пропорциональна размеру; очередь per-user — не баг.</li> -->
+      <!-- <li>Закрытие вкладки не останавливает перевод: задачи продолжают выполняться на сервере; отсутствие «мгновенного» прогресса в таком случае — не баг.</li> -->
+      <!-- <li>Надпись «Конвертация PDF дольше обычного» на больших файлах — ожидаемое поведение, не баг.</li> -->
+    </ul>
+    <!-- <p style="margin:12px 0 0;color:var(--c-secondary);font-size:12px;">Дополнять список: файл <code>static/support.html</code>, блок <code>knownNonBugs</code> — добавляйте новые пункты списком (li).</p> -->
+  </details>
 </main>
 
 <footer>
@@ -285,9 +364,89 @@ const formSuccess = document.getElementById('formSuccess');
 const charCount = document.getElementById('charCount');
 const adminPanel = document.getElementById('adminPanel');
 const messagesList = document.getElementById('messagesList');
+const attachInput = document.getElementById('attachInput');
+const attachBtn = document.getElementById('attachBtn');
+const attachChips = document.getElementById('attachChips');
+const attachHint = document.getElementById('attachHint');
+
+let pendingFiles = [];
+const ATTACH_ALLOWED_TYPES = { 'image/png': 1, 'image/jpeg': 1, 'image/webp': 1, 'image/gif': 1 };
+const ATTACH_MAX_BYTES = 1024 * 1024;
+const ATTACH_MAX_COUNT = 10;
 
 msgInput.addEventListener('input', () => {
   charCount.textContent = msgInput.value.length + ' / 5000';
+});
+
+function renderChips() {
+  attachChips.innerHTML = '';
+  attachChips.style.display = pendingFiles.length ? 'flex' : 'none';
+  pendingFiles.forEach((f, idx) => {
+    const chip = document.createElement('div');
+    chip.className = 'attach-chip';
+    const txt = document.createElement('span');
+    txt.textContent = `${f.name} (${(f.size / 1024).toFixed(0)} КБ)`;
+    const rm = document.createElement('button');
+    rm.type = 'button';
+    rm.textContent = '✕';
+    rm.title = 'Убрать';
+    rm.addEventListener('click', () => {
+      pendingFiles.splice(idx, 1);
+      renderChips();
+    });
+    chip.appendChild(txt);
+    chip.appendChild(rm);
+    attachChips.appendChild(chip);
+  });
+}
+
+function addFiles(fileList) {
+  const problems = [];
+  const files = Array.from(fileList || []);
+  for (const f of files) {
+    if (!ATTACH_ALLOWED_TYPES[f.type]) {
+      problems.push(`${f.name}: не изображение (нужны PNG/JPG/WebP/GIF)`);
+    } else if (f.size > ATTACH_MAX_BYTES) {
+      problems.push(`${f.name}: больше 1 МБ`);
+    } else if (pendingFiles.length >= ATTACH_MAX_COUNT) {
+      problems.push('Лимит — не более 10 изображений');
+    } else {
+      pendingFiles.push(f);
+    }
+  }
+  attachHint.textContent = problems.join('; ');
+  renderChips();
+}
+
+attachBtn.addEventListener('click', () => attachInput.click());
+attachInput.addEventListener('change', () => {
+  addFiles(attachInput.files);
+  attachInput.value = '';
+});
+
+msgInput.addEventListener('paste', (e) => {
+  const items = Array.from((e.clipboardData && e.clipboardData.items) || []);
+  const files = items
+    .filter(it => it.kind === 'file')
+    .map(it => it.getAsFile())
+    .filter(Boolean);
+  if (files.length) {
+    e.preventDefault();
+    addFiles(files);
+  }
+});
+
+['dragover', 'dragenter'].forEach(ev => form.addEventListener(ev, (e) => {
+  e.preventDefault();
+  form.style.outline = '2px dashed var(--c-primary)';
+}));
+form.addEventListener('dragleave', () => { form.style.outline = ''; });
+form.addEventListener('drop', (e) => {
+  e.preventDefault();
+  form.style.outline = '';
+  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+    addFiles(e.dataTransfer.files);
+  }
 });
 
 form.addEventListener('submit', async (e) => {
@@ -300,30 +459,32 @@ form.addEventListener('submit', async (e) => {
     formError.style.display = 'block';
     return;
   }
+  const fd = new FormData();
+  fd.append('message', msg);
+  pendingFiles.forEach(f => fd.append('files', f, f.name));
+  const doSend = () => authFetch('/support/feedback', { method: 'POST', body: fd });
   try {
-    const resp = await authFetch('/support/feedback', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: msg }),
-    });
+    const resp = await doSend();
     if (resp.status === 201) {
       formSuccess.textContent = 'Сообщение отправлено. Спасибо!';
       formSuccess.style.display = 'block';
       msgInput.value = '';
       charCount.textContent = '0 / 5000';
+      pendingFiles = [];
+      renderChips();
+      attachHint.textContent = '';
       loadMessages();
     } else if (resp.status === 401) {
       if (await tryRefresh()) {
-        const retry = await authFetch('/support/feedback', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: msg }),
-        });
-        if (retry.ok) {
+        const retry = await doSend();
+        if (retry.status === 201) {
           formSuccess.textContent = 'Сообщение отправлено. Спасибо!';
           formSuccess.style.display = 'block';
           msgInput.value = '';
           charCount.textContent = '0 / 5000';
+          pendingFiles = [];
+          renderChips();
+          attachHint.textContent = '';
           loadMessages();
           return;
         }
@@ -332,7 +493,7 @@ form.addEventListener('submit', async (e) => {
       form.style.display = 'none';
     } else {
       const err = await resp.json().catch(() => ({}));
-      formError.textContent = err.detail || 'Ошибка сервера';
+      formError.textContent = err.detail || ('Ошибка сервера (' + resp.status + ')');
       formError.style.display = 'block';
     }
   } catch {
@@ -355,9 +516,15 @@ async function loadMessages() {
     }
     messagesList.innerHTML = msgs.map(m => {
       const date = new Date(m.created_at).toLocaleString('ru-RU');
+      const atts = (m.attachments || []).map(a =>
+        `<a href="/support/feedback/${m.id}/attachment/${a.id}" target="_blank" title="${escapeHtml(a.filename)}">
+          <img class="attach-thumb" src="/support/feedback/${m.id}/attachment/${a.id}" alt="${escapeHtml(a.filename)}">
+        </a>`
+      ).join('');
       return `<div class="msg-item">
         <div class="msg-meta"><strong>${escapeHtml(m.username)}</strong> &middot; ${date}</div>
         <div class="msg-text">${escapeHtml(m.message)}</div>
+        ${atts}
       </div>`;
     }).join('');
   } catch {}

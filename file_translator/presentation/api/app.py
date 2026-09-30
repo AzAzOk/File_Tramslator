@@ -40,6 +40,7 @@ from file_translator.application.schemas import (
     BatchJobCreateResponseSchema,
     BatchJobItemSchema,
     FeedbackCreateSchema,
+    FeedbackAttachmentSchema,
     FeedbackEntrySchema,
     GlossaryCollectionListResponseSchema,
     GlossaryCollectionSchema,
@@ -1553,6 +1554,12 @@ async def download_job_result(
 
 # ── Feedback / Support ──
 
+from file_translator.application.support_attachments import (
+    MAX_ATTACHMENTS,
+    MAX_IMAGE_BYTES,
+    detect_image_type,
+)
+
 _GLOSSARY_DB_PASSWORD = os.environ.get("GLOSSARY_DB_PASSWORD", "")
 if not _GLOSSARY_DB_PASSWORD:
     raise RuntimeError(
@@ -1596,15 +1603,94 @@ async def _feedback_insert(query: str, params: tuple = ()) -> int:
     return await asyncio.to_thread(_sync)
 
 
+_FEEDBACK_ATTACHMENT_DDL = """
+CREATE TABLE IF NOT EXISTS feedback_attachment (
+  id            BIGINT AUTO_INCREMENT PRIMARY KEY,
+  feedback_id   INT          NOT NULL,
+  position      INT          NOT NULL,
+  filename      VARCHAR(255) NOT NULL,
+  content_type  VARCHAR(100) NOT NULL,
+  size          INT          NOT NULL,
+  data          LONGBLOB     NOT NULL,
+  created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_feedback_attachment_feedback
+    FOREIGN KEY (feedback_id) REFERENCES feedback(id) ON DELETE CASCADE,
+  INDEX idx_feedback_attachment_feedback (feedback_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+"""
+
+
+async def _feedback_attachment_ensure() -> bool:
+    """Best-effort CREATE TABLE IF NOT EXISTS; never crash if права у DB нет."""
+    try:
+        await _feedback_db(_FEEDBACK_ATTACHMENT_DDL)
+        return True
+    except Exception as exc:
+        logger.warning("Could not ensure feedback_attachment table: %s", exc)
+        return False
+
+
+_ATTACHMENT_META_SQL = (
+    "SELECT id, feedback_id, position, filename, content_type, size "
+    "FROM feedback_attachment WHERE feedback_id = %s ORDER BY position"
+)
+
+
+async def _feedback_attachment_meta(feedback_id: int) -> list[FeedbackAttachmentSchema]:
+    rows = await _feedback_db(_ATTACHMENT_META_SQL, (feedback_id,))
+    return [
+        FeedbackAttachmentSchema(
+            id=r["id"], feedback_id=r["feedback_id"], position=r["position"],
+            filename=r["filename"], content_type=r["content_type"], size=r["size"],
+        )
+        for r in rows
+    ]
+
+
 @app.post("/support/feedback", response_model=FeedbackEntrySchema, status_code=201)
 async def send_feedback(
-    body: FeedbackCreateSchema,
+    message: str = Form(...),
+    files: list[UploadFile] = File(default=[]),
     auth: AuthCredentials = Depends(get_current_user),
 ):
+    msg = (message or "").strip()
+    if not msg:
+        raise HTTPException(status_code=422, detail="Сообщение не может быть пустым")
+    if len(msg) > 5000:
+        raise HTTPException(status_code=422, detail="Сообщение не длиннее 5000 символов")
+    if len(files) > MAX_ATTACHMENTS:
+        raise HTTPException(status_code=422, detail="Не более 10 изображений за одно сообщение")
+
+    await _feedback_attachment_ensure()
+
+    attachments: list[tuple[str, str, int, bytes]] = []
+    problems: list[str] = []
+    for f in files:
+        data = await f.read()
+        name = f.filename or "attachment"
+        if len(data) > MAX_IMAGE_BYTES:
+            problems.append(f"{name}: превышает 1 МБ")
+            continue
+        ctype = detect_image_type(data)
+        if ctype is None:
+            problems.append(f"{name}: не является поддерживаемым изображением (png/jpeg/webp/gif)")
+            continue
+        attachments.append((name, ctype, len(data), data))
+    if problems:
+        raise HTTPException(status_code=422, detail="; ".join(problems))
+
     new_id = await _feedback_insert(
         "INSERT INTO feedback (user_id, username, message, created_at) VALUES (%s, %s, %s, NOW())",
-        (auth.user.user_id, auth.user.username, body.message),
+        (auth.user.user_id, auth.user.username, msg),
     )
+    for pos, (name, ctype, size, data) in enumerate(attachments, start=1):
+        await _feedback_insert(
+            "INSERT INTO feedback_attachment "
+            "(feedback_id, position, filename, content_type, size, data, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, NOW())",
+            (new_id, pos, name, ctype, size, data),
+        )
+
     rows = await _feedback_db("SELECT * FROM feedback WHERE id = %s", (new_id,))
     row = rows[0]
     return FeedbackEntrySchema(
@@ -1613,6 +1699,7 @@ async def send_feedback(
         username=row["username"],
         message=row["message"],
         created_at=row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else str(row["created_at"]),
+        attachments=await _feedback_attachment_meta(new_id),
     )
 
 
@@ -1621,16 +1708,42 @@ async def list_feedback(
     _: AuthCredentials = Depends(require_permission(Permission.VIEW_FEEDBACK)),
 ):
     rows = await _feedback_db("SELECT * FROM feedback ORDER BY created_at DESC")
-    return [
-        FeedbackEntrySchema(
+    result = []
+    for r in rows:
+        result.append(FeedbackEntrySchema(
             id=r["id"],
             user_id=r["user_id"],
             username=r["username"],
             message=r["message"],
             created_at=r["created_at"].isoformat() if hasattr(r["created_at"], "isoformat") else str(r["created_at"]),
-        )
-        for r in rows
-    ]
+            attachments=await _feedback_attachment_meta(r["id"]),
+        ))
+    return result
+
+
+@app.get("/support/feedback/{feedback_id}/attachment/{attachment_id}")
+async def feedback_attachment_binary(
+    feedback_id: int,
+    attachment_id: int,
+    _: AuthCredentials = Depends(require_permission(Permission.VIEW_FEEDBACK)),
+):
+    rows = await _feedback_db(
+        "SELECT feedback_id, filename, content_type, data FROM feedback_attachment WHERE id = %s",
+        (attachment_id,),
+    )
+    if not rows or rows[0]["feedback_id"] != feedback_id:
+        raise HTTPException(status_code=404, detail="Вложение не найдено")
+    row = rows[0]
+    from fastapi.responses import Response
+    filename = row["filename"]
+    return Response(
+        content=bytes(row["data"]),
+        media_type=row["content_type"],
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
 
 
 # Serve static frontend
