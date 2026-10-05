@@ -85,8 +85,17 @@ class TranslationService:
         self._journal_service = journal_service
         self._job_manager = job_manager
         self._validation_chain = validation_chain
+        self._access_resolver = None  # shared Mongo-backed resolver (set at startup)
         self._init_lock = threading.Lock()
         self._async_init_lock = asyncio.Lock()
+
+    def set_access_resolver(self, resolver: Any) -> None:
+        """Inject the shared collection-access resolver (Mongo-backed).
+
+        Called at application startup so the glossary service and the
+        collection access checks use the same cached instance.
+        """
+        self._access_resolver = resolver
     
     async def get_provider(self) -> TranslationProvider:
         """Get the translation provider instance (lazy init)."""
@@ -113,7 +122,7 @@ class TranslationService:
                 from file_translator.infrastructure.repositories.mysql_glossary_repository import MySQLGlossaryRepository
                 mysql_repo = MySQLGlossaryRepository()
                 collection_repo = InMemoryGlossaryCollectionRepository(mysql_repo)
-                access_resolver = GlossaryAccessResolver()
+                access_resolver = self._access_resolver or GlossaryAccessResolver()
                 self._glossary_service = GlossaryService(
                     repository=mysql_repo,
                     collection_repository=collection_repo,

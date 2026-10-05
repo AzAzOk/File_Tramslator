@@ -1,0 +1,16 @@
+# Docker build context allow-list.
+#
+# All three images build from the repository root, so without this file every
+# `docker build` ships the entire working tree to the daemon: the diagnostic
+# renders under testdata/ (tens of megabytes of page images of real documents),
+# .git, .env, uploads/, logs/, openspec/ and __pycache__ included. Anything not
+# re-included below never reaches the daemon.
+*
+!.gitignore
+!requirements.txt
+!*.deb
+!file_translator/
+!static/
+!admin_service/
+!oda-converter/
+!docs/

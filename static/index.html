@@ -1330,7 +1330,7 @@ if (stageName === 'conversion') {
         card.querySelector('.flex.items-center.justify-between').appendChild(dlBtn);
       }
     }
-    // Убираем карточку через 7 дней (синхронизировано с TTL сервера)
+    // Убираем карточку через 7 дней — клиентский предел; серверный TTL (JOB_TTL_SECONDS) операторно-настраиваемый
     setTimeout(() => {
       card.style.opacity = '0';
       card.style.transition = 'opacity 0.4s';
@@ -1803,9 +1803,8 @@ window.downloadJob = async function(jobId) {
       window.URL.revokeObjectURL(url);
     }, 100);
     
-    // Сразу убираем задачу из активных — файл скачан
-    delete activeJobs[jobId];
-    updateActiveJobsPanel();
+    // Сразу убираем задачу из активных и localStorage — файл скачан
+    removeJobCard(jobId);
     
   } catch (e) {
     // Fallback: прямая ссылка на скачивание
@@ -1816,7 +1815,8 @@ window.downloadJob = async function(jobId) {
   }
 };
 
-// Очистка завершённых jobs через 7 дней (синхронизировано с серверным TTL JOB_TTL_SECONDS=604800)
+// Очистка завершённых jobs через 7 дней — клиентский верхний предел;
+// фактический серверный TTL операторно-настраиваемый (JOB_TTL_SECONDS)
 setInterval(() => {
   const now = Date.now();
   for (const jobId in activeJobs) {
@@ -1837,7 +1837,7 @@ function updateActiveJobsPanel() {
   const visibleIds = Object.keys(activeJobs).filter(id => {
     const job = activeJobs[id];
     if (!job.completedAt) return true;
-    return (now - job.completedAt) < 604800000; // 7 дней, синхронизировано с серверным TTL
+    return (now - job.completedAt) < 604800000; // 7 дней — клиентский предел; серверный TTL (JOB_TTL_SECONDS) операторно-настраиваемый
   });
 
   if (visibleIds.length === 0) {

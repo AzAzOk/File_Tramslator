@@ -20,16 +20,21 @@ class AuthService:
     Handles:
     - User login and token issuance (LDAP first, local fallback)
     - Token validation (bearer, API key)
-    - Permission checking
+    - Permission checking (role registry aware)
+    - Collection access checking
     - User management
     """
     
     def __init__(self, auth_provider: AuthProvider | None = None,
-                 user_repository: UserRepository | None = None):
+                 user_repository: UserRepository | None = None,
+                 role_store: Any | None = None,
+                 collection_resolver: Any | None = None):
         self._auth_provider = auth_provider
         self._user_repository = user_repository
-        self.session_repo = None
-        self.ldap_service = None
+        self._role_store = role_store
+        self._collection_resolver = collection_resolver
+        self.session_repo: Any = None
+        self.ldap_service: Any = None
     
     @property
     def auth_provider(self) -> AuthProvider:
@@ -44,6 +49,25 @@ class AuthService:
             from file_translator.infrastructure.auth.stub_user_repository import StubUserRepository
             self._user_repository = StubUserRepository()
         return self._user_repository
+
+    @property
+    def role_store(self) -> Any:
+        """RoleConfigStore used to resolve effective permissions.
+
+        Falls back to a store without a repository → Python defaults.
+        """
+        if not self._role_store:
+            from file_translator.infrastructure.auth.role_config import RoleConfigStore
+            self._role_store = RoleConfigStore()
+        return self._role_store
+
+    @property
+    def collection_resolver(self) -> Any:
+        """GlossaryAccessResolver used for collection-level access checks."""
+        if not self._collection_resolver:
+            from file_translator.infrastructure.auth.glossary_access_resolver import GlossaryAccessResolver
+            self._collection_resolver = GlossaryAccessResolver()
+        return self._collection_resolver
     
     async def login(self, username: str, password: str) -> AuthToken | None:
         """Authenticate a user with username/password.
@@ -88,7 +112,17 @@ class AuthService:
                                         display_name: str,
                                         role: RoleType,
                                         ldap_groups: list[str] | None = None) -> AuthToken | None:
-        """Handle post-authentication: find-or-create user, issue token."""
+        """Handle post-authentication: find-or-create user, issue token.
+
+        Non-destructive sync (design D5):
+
+        - Creates the user when absent (role from ``map_to_role``,
+          ``manual_role=false``).
+        - Otherwise refreshes ONLY the LDAP-owned facts when they changed
+          (``display_name``, ``ldap_groups``) and updates the role only when
+          ``manual_role=false`` and the mapped role differs. A manually
+          assigned role always survives an AD login.
+        """
         user = await self.user_repository.get_by_username(username)
         if not user:
             user = User(
@@ -96,21 +130,32 @@ class AuthService:
                 username=username,
                 display_name=display_name or username,
                 role=role,
+                role_name=role.value,
                 ldap_groups=ldap_groups,
                 is_active=True,
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
-            user = await self.user_repository.create(user)
+            await self.user_repository.create(user)
             logger.info(f"User '{username}' auto-created via LDAP with role {role.value}")
         elif not user.is_active:
             logger.warning(f"Login failed: user '{username}' inactive")
             return None
         else:
-            if user.role != role:
-                user.role = role
+            changed = False
+            new_display = display_name or username
+            if user.display_name != new_display:
+                user.display_name = new_display
+                changed = True
+            if sorted(user.ldap_groups or []) != sorted(ldap_groups or []):
                 user.ldap_groups = ldap_groups
-                await self.user_repository.update(user)
+                changed = True
+            if not user.manual_role and user.role != role:
+                user.role = role
+                user.role_name = role.value
+                changed = True
                 logger.info(f"User '{username}' role updated to {role.value} via LDAP")
+            if changed:
+                await self.user_repository.update(user)
 
         token = await self.auth_provider.create_token(user.user_id)
         user.last_login_at = datetime.now(timezone.utc).isoformat()
@@ -160,21 +205,49 @@ class AuthService:
             ),
         )
     
-    def check_permission(self, credentials: AuthCredentials,
-                         permission: Permission) -> bool:
+    async def effective_permissions_for(self, user: User) -> set[Permission]:
+        """Resolve a user's effective permissions from the runtime role registry.
+
+        Combines the role's permission pool (Mongo → cached → Python fallback)
+        with the user's individual permission overrides. The built-in admin
+        role is always granted every permission.
+        """
+        role_name = getattr(user, "role_name", "") or (user.role.value if user.role else "")
+        if role_name == RoleType.ADMIN.value:
+            return set(Permission)
+        role_permission_values = await self.role_store.resolve_permissions(role_name)
+        effective: set[Permission] = set()
+        for value in role_permission_values:
+            try:
+                effective.add(Permission(value))
+            except ValueError:
+                logger.debug(f"Ignoring unknown permission value '{value}' for role '{role_name}'")
+        return effective | set(getattr(user, "permissions", set()))
+
+    async def check_permission(self, credentials: AuthCredentials,
+                                 permission: Permission) -> bool:
         """Check if authenticated user has a specific permission."""
         if not credentials or not credentials.is_authenticated:
             return False
-        return credentials.user.has_permission(permission)
-    
-    def require_permission(self, credentials: AuthCredentials,
-                           permission: Permission) -> None:
+        return permission in await self.effective_permissions_for(credentials.user)
+
+    async def require_permission(self, credentials: AuthCredentials,
+                                   permission: Permission) -> None:
         """Raise PermissionError if user lacks the given permission."""
-        if not self.check_permission(credentials, permission):
+        if not await self.check_permission(credentials, permission):
             username = credentials.username if credentials else "anonymous"
             raise PermissionError(
                 f"User '{username}' lacks required permission: {permission.value}"
             )
+
+    async def check_collection_access(self, credentials: AuthCredentials,
+                                      collection_id: str, level: str = "read") -> bool:
+        """Check read/write collection access for an authenticated user."""
+        if not credentials or not credentials.is_authenticated:
+            return False
+        return await self.collection_resolver.can_access(
+            credentials.user, collection_id, level,
+        )
     
     async def create_user(self, username: str, password: str,
                            role: RoleType = RoleType.VIEWER,

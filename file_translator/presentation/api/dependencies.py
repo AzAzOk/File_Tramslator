@@ -54,7 +54,7 @@ def require_permission(permission: Permission) -> Any:
         credentials: AuthCredentials = Depends(get_current_user),
         auth_service: AuthService = Depends(get_auth_service),
     ) -> AuthCredentials:
-        if not auth_service.check_permission(credentials, permission):
+        if not await auth_service.check_permission(credentials, permission):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Missing required permission: {permission.value}",
@@ -62,3 +62,26 @@ def require_permission(permission: Permission) -> Any:
         return credentials
     
     return _check_permission
+
+
+async def require_collection_access(
+    credentials: AuthCredentials,
+    collection_id: str,
+    level: str = "read",
+    auth_service: AuthService | None = None,
+) -> AuthCredentials:
+    """Helper that enforces read/write collection access for an authenticated user.
+
+    Raises HTTP 403 when the user cannot access the collection at the required
+    level. ``auth_service`` may be passed explicitly; otherwise it is resolved
+    from the application state (tests inject fake resolvers via GlossaryService,
+    so they typically pre-check before calling handlers).
+    """
+    if auth_service is None:
+        auth_service = get_auth_service()
+    if not await auth_service.check_collection_access(credentials, collection_id, level):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Нет доступа к коллекции '{collection_id}'",
+        )
+    return credentials

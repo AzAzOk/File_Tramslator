@@ -72,6 +72,11 @@ output/
 *.xlsx
 *.pdf
 
+# Diagnostic page renders (`python -m file_translator.diagnostics render`).
+# Regenerable on demand, and they are page images of real documents - tens of
+# megabytes that must not land in the repository.
+testdata/**/render/
+
 # Language detector model cache
 .linguacache/
 

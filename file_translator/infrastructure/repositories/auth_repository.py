@@ -9,7 +9,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from file_translator.domain.auth import ApiKey, RoleType, User
+from file_translator.domain.auth import ApiKey, Permission, RoleType, User
 from file_translator.domain.interfaces import UserRepository
 
 logger = logging.getLogger(__name__)
@@ -49,15 +49,32 @@ class MongoUserRepository(UserRepository):
 
     @staticmethod
     def _doc_to_user(doc: dict[str, Any]) -> User:
+        raw_role = doc.get("role", "viewer")
+        try:
+            role = RoleType(raw_role)
+        except ValueError:
+            # Custom runtime role (managed through the admin service) is not a
+            # member of the legacy enum — fall back to VIEWER for the enum
+            # field while keeping the canonical name in `role_name`.
+            role = RoleType.VIEWER
+        permissions: set[Permission] = set()
+        for p in doc.get("permissions") or []:
+            try:
+                permissions.add(Permission(p))
+            except ValueError:
+                continue
         user = User(
             user_id=doc.get("user_id", ""),
             username=doc.get("username", ""),
             display_name=doc.get("display_name", ""),
-            role=RoleType(doc.get("role", "viewer")),
+            role=role,
+            role_name=raw_role,
+            permissions=permissions,
             is_active=doc.get("is_active", True),
             created_at=doc.get("created_at", ""),
             last_login_at=doc.get("last_login_at", ""),
             ldap_groups=doc.get("ldap_groups"),
+            manual_role=bool(doc.get("manual_role", False)),
         )
         password_hash = doc.get("password_hash", "")
         if password_hash:
@@ -70,12 +87,14 @@ class MongoUserRepository(UserRepository):
             "user_id": user.user_id,
             "username": user.username,
             "display_name": user.display_name,
-            "role": user.role.value if user.role else "viewer",
+            "role": getattr(user, "role_name", "") or (user.role.value if user.role else "viewer"),
             "password_hash": getattr(user, "password_hash", ""),
             "is_active": user.is_active,
             "created_at": user.created_at,
             "last_login_at": user.last_login_at,
             "ldap_groups": getattr(user, "ldap_groups", None),
+            "manual_role": bool(getattr(user, "manual_role", False)),
+            "permissions": sorted(p.value for p in getattr(user, "permissions", set())),
         }
 
 

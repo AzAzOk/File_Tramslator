@@ -25,16 +25,32 @@ class Permission(Enum):
 
 
 class RoleType(Enum):
-    """Predefined roles with bundled permissions."""
+    """Predefined roles with bundled permissions.
+
+    ``USER`` is the standard person role managed as a Mongo document by the
+    admin service; it is the successor of the legacy ``OPERATOR`` role. The
+    remaining members form the legacy compatibility layer for pre-2.x user
+    documents (``operator``/``viewer``/``api`` literal values).
+    """
     
     ADMIN = "admin"           # Full access
-    OPERATOR = "operator"     # Can translate, view/manage own jobs, view glossary
+    USER = "user"             # Standard permissions for people (runtime role)
+    OPERATOR = "operator"     # Legacy: can translate, view/manage own jobs, view glossary
     VIEWER = "viewer"         # Read-only access to jobs and glossary
     API = "api"               # Machine account: translate only
 
 
 _ROLE_PERMISSIONS: dict[RoleType, set[Permission]] = {
     RoleType.ADMIN: set(Permission),
+    RoleType.USER: {
+        Permission.TRANSLATE,
+        Permission.VIEW_GLOSSARY,
+        Permission.EDIT_GLOSSARY,
+        Permission.VIEW_JOBS,
+        Permission.CANCEL_JOBS,
+        Permission.VIEW_JOURNAL,
+        Permission.SEND_FEEDBACK,
+    },
     RoleType.OPERATOR: {
         Permission.TRANSLATE,
         Permission.VIEW_GLOSSARY,
@@ -76,6 +92,12 @@ class User:
     is_active: bool = True
     created_at: str = ""
     last_login_at: str = ""
+    # Raw persisted role name (may be a custom role managed through the admin
+    # service and therefore not a member of the legacy RoleType enum).
+    role_name: str = ""
+    # True when an administrator manually assigned the role (AD logins must
+    # NOT overwrite a manual role).
+    manual_role: bool = False
     
     @property
     def effective_permissions(self) -> set[Permission]:

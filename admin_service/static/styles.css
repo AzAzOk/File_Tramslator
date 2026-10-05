@@ -1,0 +1,553 @@
+/* Admin UI — component layer on top of the generated utility build
+   (tailwind.css) and the design tokens (tokens.css). Both generated files come
+   from the main application, so every colour below is a token reference and the
+   markup never names a colour. No CDN dependencies. */
+
+/* Visibility toggle, authoritative. Component rules below set `display` at the
+   same specificity (e.g. .modal-backdrop{display:flex}), so without this the
+   hidden modal overlay would keep intercepting every click on the page. */
+.hidden { display: none !important; }
+
+/* ------------------------------------------------------------ left navigation */
+.nav-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  /* Explicit: without it the button keeps the user-agent ButtonFace (white),
+     which is what made the menu unreadable before the base reset. */
+  background: transparent;
+  border: 0;
+  color: var(--c-on-surface-variant);
+  transition: background-color 0.15s, color 0.15s;
+}
+.nav-item:hover {
+  background: var(--c-surface-container-high);
+  color: var(--c-on-surface);
+}
+.nav-item.active {
+  background: var(--c-primary-container);
+  color: var(--c-on-primary-container);
+  font-weight: 500;
+}
+
+/* --------------------------------------------------------------- surfaces */
+.card {
+  border-radius: 0.75rem;
+  border: 1px solid var(--c-outline-variant);
+  background: var(--c-surface-container-low);
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid var(--c-outline-variant);
+  background: color-mix(in srgb, var(--c-background) 88%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--c-on-surface-variant);
+  transition: background-color 0.15s, color 0.15s;
+}
+.theme-toggle:hover {
+  background: var(--c-surface-container-high);
+  color: var(--c-on-surface);
+}
+.theme-toggle svg { width: 1.25rem; height: 1.25rem; }
+/* Icon shows the *current* theme, matching the main application. */
+.theme-toggle .icon-moon { display: none; }
+.dark .theme-toggle .icon-sun { display: none; }
+.dark .theme-toggle .icon-moon { display: block; }
+
+/* ------------------------------------------------------------------ tables */
+.table-wrap {
+  overflow-x: auto;
+  border-radius: 0.75rem;
+  border: 1px solid var(--c-outline-variant);
+}
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+table.data th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--c-on-surface-variant);
+  padding: 0.625rem 0.75rem;
+  border-bottom: 1px solid var(--c-outline-variant);
+  white-space: nowrap;
+  background: var(--c-surface-container);
+}
+table.data td {
+  padding: 0.625rem 0.75rem;
+  border-bottom: 1px solid var(--c-outline-variant);
+  vertical-align: middle;
+}
+table.data tr:last-child td {
+  border-bottom: none;
+}
+table.data tbody tr:hover {
+  background: var(--c-surface-container-low);
+}
+
+/* ------------------------------------------------------------------ badges
+   Status is carried by the tint and the border, not by the text colour: the
+   status tokens are mid-tone and fall below WCAG AA as text on a light
+   surface. The same reasoning keeps the yellow accent on fills that carry
+   --c-on-primary-container text, never on the text itself. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.6875rem;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.badge-neutral {
+  background: var(--c-surface-container-high);
+  color: var(--c-on-surface-variant);
+  border-color: var(--c-outline-variant);
+}
+.badge-accent {
+  background: var(--c-primary-container);
+  color: var(--c-on-primary-container);
+}
+.badge-info {
+  background: color-mix(in srgb, var(--c-secondary) 16%, transparent);
+  color: var(--c-on-surface);
+  border-color: color-mix(in srgb, var(--c-secondary) 40%, transparent);
+}
+.badge-success {
+  background: color-mix(in srgb, var(--c-status-success) 16%, transparent);
+  color: var(--c-on-surface);
+  border-color: color-mix(in srgb, var(--c-status-success) 40%, transparent);
+}
+.badge-danger {
+  background: color-mix(in srgb, var(--c-error) 16%, transparent);
+  color: var(--c-on-surface);
+  border-color: color-mix(in srgb, var(--c-error) 40%, transparent);
+}
+
+/* ----------------------------------------------------------------- buttons */
+.btn {
+  border-radius: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+  border: 1px solid var(--c-outline);
+  background: transparent;
+  color: var(--c-on-surface);
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.btn:hover { background: var(--c-surface-container-high); }
+/* The token set has no --c-on-primary; Material 3 pairs the primary fill with
+   the on-primary-container ink, which is the same near-black in both themes. */
+.btn-primary {
+  background: var(--c-primary);
+  border-color: var(--c-primary);
+  color: var(--c-on-primary-container);
+  font-weight: 500;
+}
+.btn-primary:hover {
+  background: var(--c-primary-container);
+  border-color: var(--c-primary-container);
+}
+.btn-danger {
+  border-color: color-mix(in srgb, var(--c-error) 55%, transparent);
+  background: color-mix(in srgb, var(--c-error) 10%, transparent);
+  color: var(--c-on-surface);
+}
+.btn-danger:hover { background: color-mix(in srgb, var(--c-error) 14%, transparent); }
+.btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+.btn[disabled]:hover { background: transparent; }
+/* `.btn` also sits on the link to the documentation page, which would
+   otherwise keep the browser's underline. */
+.btn { text-decoration: none; }
+.docs-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+.docs-open svg { width: 0.875rem; height: 0.875rem; }
+
+/* ------------------------------------------------------------------ inputs */
+.input {
+  border-radius: 0.5rem;
+  border: 1px solid var(--c-outline);
+  background: var(--c-surface-container-lowest);
+  padding: 0.375rem 0.625rem;
+  font-size: 0.8125rem;
+  color: var(--c-on-surface);
+  outline: none;
+}
+.input:focus {
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-primary) 25%, transparent);
+}
+
+/* Access matrix: one column per collection, R/W checkbox pairs. */
+.matrix th.rot { min-width: 5.5rem; }
+.matrix td { text-align: center; }
+.matrix td.row-label {
+  text-align: left;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+}
+.matrix input[type="checkbox"] {
+  accent-color: var(--c-primary);
+  width: 0.9rem;
+  height: 0.9rem;
+  cursor: pointer;
+}
+.matrix td.cell-pair {
+  display: table-cell;
+  white-space: nowrap;
+}
+.matrix td.cell-pair label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.6875rem;
+  color: var(--c-on-surface-variant);
+  margin-right: 0.375rem;
+}
+
+/* ------------------------------------------------------------------- modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--c-inverse-surface) 55%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  z-index: 50;
+  backdrop-filter: blur(2px);
+}
+.modal-card {
+  width: 100%;
+  max-width: 34rem;
+  border-radius: 1rem;
+  border: 1px solid var(--c-outline-variant);
+  background: var(--c-surface-container-low);
+  padding: 1.5rem;
+  box-shadow: 0 25px 50px -12px color-mix(in srgb, var(--c-inverse-surface) 45%, transparent);
+}
+
+/* ------------------------------------------------------------------- toast */
+.toast {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  z-index: 60;
+  max-width: 24rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--c-outline);
+  background: var(--c-surface-container-high);
+  color: var(--c-on-surface);
+  padding: 0.75rem 1rem;
+  font-size: 0.8125rem;
+  box-shadow: 0 10px 25px -5px color-mix(in srgb, var(--c-inverse-surface) 40%, transparent);
+}
+.toast.ok { border-color: var(--c-status-success); color: var(--c-on-surface); }
+.toast.err { border-color: var(--c-error); color: var(--c-on-surface); }
+
+/* --------------------------------------------------------------- perm grid */
+.perm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.375rem;
+}
+.perm-grid label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--c-outline-variant);
+  border-radius: 0.5rem;
+  padding: 0.375rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--c-on-surface);
+  cursor: pointer;
+}
+.perm-grid label:hover {
+  border-color: var(--c-outline);
+  background: var(--c-surface-container-low);
+}
+.perm-grid input { accent-color: var(--c-primary); }
+
+/* ------------------------------------------- documentation page (/docs)
+   Two columns: the guide's sections on the left, the article on the right.
+   Every colour is a token reference, so the page follows the light/dark switch
+   with no markup change - the same rule the rest of the admin UI follows.
+
+   Rules under .docs-content also undo the utility reset, which would otherwise
+   strip every list marker and block margin inside the rendered article. */
+.docs-body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+.docs-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 0 0 auto;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid var(--c-outline-variant);
+  background: color-mix(in srgb, var(--c-background) 88%, transparent);
+  backdrop-filter: blur(8px);
+}
+.docs-title {
+  margin: 0;
+  font-family: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--c-on-surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.docs-search {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-left: auto;
+}
+.docs-search-input { width: 16rem; max-width: 34vw; }
+.docs-match-count {
+  min-width: 4.75rem;
+  text-align: center;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.6875rem;
+  color: var(--c-on-surface-variant);
+}
+.docs-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+}
+.docs-body-grid {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ------------------------------------------------------------ section tree */
+.docs-tree {
+  flex: 0 0 18rem;
+  width: 18rem;
+  padding: 1rem 0.75rem;
+  overflow-y: auto;
+  border-right: 1px solid var(--c-outline-variant);
+  background: var(--c-surface-container-low);
+}
+.docs-tree-head {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 0.5rem 0.5rem;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--c-on-surface-variant);
+}
+.docs-tree-count { font-family: "JetBrains Mono", ui-monospace, monospace; }
+.docs-tree-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.docs-tree-item {
+  display: block;
+  padding: 0.3125rem 0.5rem;
+  border-radius: 0.375rem;
+  text-decoration: none;
+  font-size: 0.8125rem;
+  color: var(--c-on-surface-variant);
+}
+.docs-tree-item:hover {
+  background: var(--c-surface-container-high);
+  color: var(--c-on-surface);
+}
+.docs-tree-item.active {
+  background: var(--c-primary-container);
+  color: var(--c-on-primary-container);
+  font-weight: 500;
+}
+.docs-tree-lv1 { font-weight: 600; color: var(--c-on-surface); }
+.docs-tree-lv2 { padding-left: 1rem; }
+.docs-tree-lv3 { padding-left: 1.5rem; }
+.docs-tree-lv4 { padding-left: 2rem; }
+
+/* ----------------------------------------------------------------- article */
+.docs-article {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2rem 2.5rem 4rem;
+  overflow-y: auto;
+}
+.docs-content { max-width: 52rem; margin: 0 auto; }
+.docs-status {
+  margin: 0 0 1.25rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  background: var(--c-surface-container-high);
+  font-size: 0.875rem;
+  color: var(--c-on-surface);
+}
+.docs-status-error {
+  border: 1px solid var(--c-error);
+  color: var(--c-on-surface);
+}
+.docs-status-auth {
+  border: 1px solid var(--c-outline);
+  color: var(--c-on-surface);
+}
+
+/* The article is server-rendered from the repository's Markdown. */
+.docs-content h1,
+.docs-content h2,
+.docs-content h3,
+.docs-content h4,
+.docs-content h5,
+.docs-content h6 {
+  margin: 2rem 0 0.75rem;
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--c-on-surface);
+}
+.docs-content h1 {
+  margin-top: 0;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--c-outline-variant);
+  font-family: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.875rem;
+}
+.docs-content h2 {
+  font-size: 1.375rem;
+}
+.docs-content h3 { font-size: 1.125rem; }
+.docs-content h4 { font-size: 1rem; }
+.docs-content h5,
+.docs-content h6 {
+  font-size: 0.9375rem;
+  color: var(--c-on-surface-variant);
+}
+.docs-content p { margin: 0 0 0.875rem; color: var(--c-on-surface); }
+.docs-content a {
+  color: var(--c-on-surface);
+  text-decoration: underline;
+  text-decoration-color: var(--c-primary);
+}
+.docs-content a:hover { text-decoration-color: var(--c-primary); }
+/* The renderer's permalink: quiet until the heading is hovered or focused. */
+.docs-content a.headerlink {
+  margin-left: 0.375rem;
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.docs-content h1:hover a.headerlink,
+.docs-content h2:hover a.headerlink,
+.docs-content h3:hover a.headerlink,
+.docs-content h4:hover a.headerlink,
+.docs-content h5:hover a.headerlink,
+.docs-content h6:hover a.headerlink,
+.docs-content a.headerlink:focus {
+  opacity: 0.65;
+}
+.docs-content ul,
+.docs-content ol {
+  margin: 0 0 0.875rem;
+  padding-left: 1.5rem;
+}
+.docs-content ul { list-style: disc; }
+.docs-content ol { list-style: decimal; }
+.docs-content li { margin: 0.25rem 0; color: var(--c-on-surface); }
+.docs-content blockquote {
+  margin: 0 0 0.875rem;
+  padding: 0.25rem 0 0.25rem 0.875rem;
+  border-left: 2px solid var(--c-primary);
+  color: var(--c-on-surface-variant);
+}
+.docs-content code {
+  padding: 0.0625rem 0.25rem;
+  border-radius: 0.25rem;
+  background: var(--c-surface-container-high);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.875em;
+  color: var(--c-on-surface);
+}
+.docs-content pre {
+  margin: 0 0 1rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--c-outline-variant);
+  border-radius: 0.5rem;
+  background: var(--c-surface-container-low);
+  overflow-x: auto;
+}
+.docs-content pre code {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.8125rem;
+}
+.docs-content table {
+  width: 100%;
+  margin: 0 0 1.25rem;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.docs-content th,
+.docs-content td {
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--c-outline-variant);
+  text-align: left;
+  vertical-align: top;
+}
+.docs-content th {
+  background: var(--c-surface-container);
+  font-weight: 600;
+  color: var(--c-on-surface);
+}
+.docs-content td { color: var(--c-on-surface); }
+.docs-content hr {
+  margin: 1.5rem 0;
+  border: 0;
+  border-top: 1px solid var(--c-outline-variant);
+}
+/* Search hits: a tint for the hits, a stronger one for the current one. */
+.docs-content mark.docs-hit {
+  border-radius: 0.125rem;
+  background: var(--c-primary-container);
+  color: var(--c-on-primary-container);
+}
+.docs-content mark.docs-hit-active {
+  background: var(--c-primary);
+  color: var(--c-on-primary-container);
+}

@@ -22,7 +22,7 @@ class LdapUserInfo:
     username: str
     display_name: str
     email: str = ""
-    groups: list[str] = None
+    groups: list[str] | None = None
 
 
 class LdapService:
@@ -160,16 +160,11 @@ class LdapService:
         return await asyncio.to_thread(_sync)
 
     def map_to_role(self, groups: list[str] | None) -> RoleType:
-        """Map AD groups to application role."""
-        if not groups:
-            return RoleType.OPERATOR
+        """Map AD groups to application role.
 
-        group_set = set(groups)
-        if self._group_admin and self._group_admin in group_set:
+        Only the admin group maps to ``admin``; everything else — including
+        the legacy ``operator``/``viewer`` LDAP groups — maps to ``user``.
+        """
+        if groups and self._group_admin and self._group_admin in set(groups):
             return RoleType.ADMIN
-        if self._group_operator and self._group_operator in group_set:
-            return RoleType.OPERATOR
-        if self._group_viewer and self._group_viewer in group_set:
-            return RoleType.VIEWER
-
-        return RoleType.OPERATOR
+        return RoleType.USER

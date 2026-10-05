@@ -162,10 +162,38 @@ class GlossaryService:
     # --- Collection-aware methods ---
 
     async def get_accessible_collections(self, groups: list[str] | None) -> list[GlossaryCollection]:
-        """Get glossary collections accessible by user's AD groups."""
+        """Get glossary collections accessible by user's AD groups.
+
+        Legacy synchronous resolver path (env map); used mainly by tests.
+        Service endpoints prefer :meth:`get_accessible_collections_for_user`.
+        """
         allowed_ids = self._access_resolver.resolve(groups)
         all_collections = await self.collection_repository.find_all()
         return [c for c in all_collections if c.id in allowed_ids]
+
+    async def get_accessible_collections_for_user(self, user: Any) -> list[GlossaryCollection]:
+        """Get glossary collections readable by a user (runtime grants aware).
+
+        The built-in admin role sees every collection.
+        """
+        all_collections = await self.collection_repository.find_all()
+        accessible = []
+        for collection in all_collections:
+            if await self._access_resolver.can_read(user, collection.id):
+                accessible.append(collection)
+        return accessible
+
+    async def can_read_collection(self, user: Any, collection_id: str) -> bool:
+        """True when the user may read the given collection."""
+        return await self._access_resolver.can_read(user, collection_id)
+
+    async def can_write_collection(self, user: Any, collection_id: str) -> bool:
+        """True when the user may write the given collection."""
+        return await self._access_resolver.can_write(user, collection_id)
+
+    async def require_collection_access(self, user: Any, collection_id: str, level: str = "read") -> bool:
+        """Resolve read/write access for a user to one collection."""
+        return await self._access_resolver.can_access(user, collection_id, level)
 
     @staticmethod
     def _table_for(collection_id: str) -> str:

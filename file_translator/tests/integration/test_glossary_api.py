@@ -28,8 +28,25 @@ from file_translator.domain.glossary import GlossaryEntry
 
 
 class FakeAccessResolver:
-    """Allows every collection."""
+    """Allows every collection (async runtime interface)."""
 
+    def __init__(self, readable: set[str] | None = None, writable: set[str] | None = None) -> None:
+        # None → allow everything
+        self.readable = readable
+        self.writable = writable
+
+    async def can_read(self, user: Any, collection_id: str) -> bool:
+        return True if self.readable is None else collection_id in self.readable
+
+    async def can_write(self, user: Any, collection_id: str) -> bool:
+        return True if self.writable is None else collection_id in self.writable
+
+    async def can_access(self, user: Any, collection_id: str, level: str = "read") -> bool:
+        if level == "write":
+            return await self.can_write(user, collection_id)
+        return await self.can_read(user, collection_id)
+
+    # Legacy synchronous API (kept for direct-resolver tests).
     def is_collection_allowed(self, collection_id: str, groups: list[str] | None = None) -> bool:
         return True
 

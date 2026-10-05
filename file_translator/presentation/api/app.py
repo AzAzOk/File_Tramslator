@@ -297,6 +297,47 @@ def _cleanup_job_temp_dirs(job: Any, job_id: str, fallback: str | None = None) -
 user_job_queue = UserJobQueue(process_func=_run_translation_job)
 
 
+async def _resolve_job_collection_id(user: Any, collection_id: str, filename: str) -> str:
+    """Resolve the glossary collection for a translation job with silent fallback.
+
+    A collection the user cannot read must not break translation: the job falls
+    back to the ``default`` collection and a warning is written to the journal
+    (design D6). Read access is *not* re-validated in the worker — the corrected
+    value is baked into the enqueued request.
+    """
+    if not collection_id:
+        return collection_id
+    from file_translator.domain.journal import JournalStage
+    from file_translator.infrastructure.auth.role_config import DEFAULT_COLLECTION
+
+    try:
+        svc = await translation_service.get_glossary_service()
+        if await svc.can_read_collection(user, collection_id):
+            return collection_id
+    except Exception as e:  # pragma: no cover - resolver/storage failure
+        logger.warning(f"Collection access check failed for '{collection_id}': {e}")
+        return collection_id
+
+    username = getattr(user, "username", "") or getattr(user, "user_id", "")
+    logger.warning(
+        f"Collection '{collection_id}' not readable by '{username}' — falling back to '{DEFAULT_COLLECTION}'"
+    )
+    try:
+        await translation_service.journal_service.log_warning(
+            JournalStage.GLOSSARY,
+            f"Коллекция '{collection_id}' недоступна пользователю '{username}' — использован глоссарий '{DEFAULT_COLLECTION}'",
+            filename=filename,
+            details={
+                "collection_id": collection_id,
+                "fallback_to": DEFAULT_COLLECTION,
+                "user": username,
+            },
+        )
+    except Exception as e:  # pragma: no cover - journal must never fail a job
+        logger.warning(f"Failed to journal glossary fallback: {e}")
+    return DEFAULT_COLLECTION
+
+
 # --- Periodic cleanup: temp dirs (1h TTL) + expired tokens ---
 
 async def _cleanup_orphaned_temp_dirs(interval: int = CLEANUP_INTERVAL_SECONDS) -> None:
@@ -446,14 +487,56 @@ async def _startup() -> None:
         token_blacklist = RedisTokenBlacklist()
         jwt_provider = JwtAuthProvider(JWT_SECRET, user_repo, token_blacklist)
 
+        # ── Role / grant configuration (Mongo-backed, runtime-managed) ──
+        from file_translator.infrastructure.auth.admin_config_version import AdminConfigVersion
+        from file_translator.infrastructure.auth.config_seeder import run_startup_seeding
+        from file_translator.infrastructure.auth.glossary_access_resolver import GlossaryAccessResolver
+        from file_translator.infrastructure.auth.role_config import GrantStore, RoleConfigStore
+        from file_translator.infrastructure.repositories.mongo_config_repository import (
+            MongoGrantRepository,
+            MongoRoleRepository,
+        )
+
+        config_version = AdminConfigVersion()
+        role_store = RoleConfigStore(
+            MongoRoleRepository(mongo_provider.db),
+            version_provider=config_version.get_version,
+            version_bumper=config_version.bump,
+        )
+        grant_store = GrantStore(
+            MongoGrantRepository(mongo_provider.db),
+            version_provider=config_version.get_version,
+            version_bumper=config_version.bump,
+        )
+        access_resolver = GlossaryAccessResolver(role_store=role_store, grant_store=grant_store)
+
         app.state.auth_service = AuthService(
             auth_provider=jwt_provider,
             user_repository=user_repo,
+            role_store=role_store,
+            collection_resolver=access_resolver,
         )
         app.state.auth_service.session_repo = session_repo
         app.state.jwt_provider = jwt_provider
         app.state.user_repo = user_repo
         app.state.session_repo = session_repo
+        app.state.role_store = role_store
+        app.state.grant_store = grant_store
+        app.state.access_resolver = access_resolver
+        app.state.config_version = config_version
+
+        # Shared instance: the glossary service and the job pipeline must use
+        # the same 30s-cached resolver (single source of truth for access).
+        translation_service.set_access_resolver(access_resolver)
+
+        # Idempotent seed: built-in roles, GLOSSARY_COLLECTION_MAP grants
+        # (only when the grants store is empty), legacy role migration.
+        try:
+            await run_startup_seeding(
+                role_store.repository, grant_store.repository, user_repo,
+            )
+        except Exception as e:
+            logger.warning(f"Startup seeding failed (config stays unseeded): {e}")
 
         ldap_service = LdapService.from_env()
         if ldap_service:
@@ -568,13 +651,17 @@ async def create_translation_job(
     content = await file.read()
     input_file.write_bytes(content)
 
+    effective_collection_id = await _resolve_job_collection_id(
+        request.state.auth.user, collection_id, file.filename or "",
+    )
+
     request_schema = TranslationRequestSchema(
         source_language=source_language,
         target_language=target_language,
         translation_style=translation_style,
         translation_mode=translation_mode,
         use_glossary=use_glossary,
-        collection_id=collection_id or None,
+        collection_id=effective_collection_id or None,
         batch_size=batch_size,
     )
 
@@ -640,13 +727,16 @@ async def create_batch_translation_jobs(
         )
 
     user_id = request.state.auth.user.user_id
+    effective_collection_id = await _resolve_job_collection_id(
+        request.state.auth.user, collection_id, "batch",
+    )
     request_schema = TranslationRequestSchema(
         source_language=source_language,
         target_language=target_language,
         translation_style=translation_style,
         translation_mode=translation_mode,
         use_glossary=use_glossary,
-        collection_id=collection_id or None,
+        collection_id=effective_collection_id or None,
         batch_size=batch_size,
     )
 
@@ -799,7 +889,7 @@ async def create_user(
 
 @app.post("/translate")
 async def translate_document(
-    _: AuthCredentials = Depends(require_permission(Permission.TRANSLATE)),
+    auth: AuthCredentials = Depends(require_permission(Permission.TRANSLATE)),
     file: UploadFile = File(...),
     source_language: str = Form("en"),
     target_language: str = Form("ru"),
@@ -860,14 +950,17 @@ async def translate_document(
             content = await file.read()
             f.write(content)
         
-        # Create translation request schema
+        # Create translation request schema (unreadable collection → default fallback)
+        effective_collection_id = await _resolve_job_collection_id(
+            auth.user, collection_id, file.filename or "",
+        )
         request = TranslationRequestSchema(
             source_language=source_language,
             target_language=target_language,
             translation_style=translation_style,
             translation_mode=translation_mode,
             use_glossary=use_glossary,
-            collection_id=collection_id or None,
+            collection_id=effective_collection_id or None,
             batch_size=batch_size,
         )
         
@@ -1002,11 +1095,10 @@ async def list_glossary_collections(
     request: Request,
     _: AuthCredentials = Depends(require_permission(Permission.VIEW_GLOSSARY)),
 ):
-    """List glossary collections accessible by the current user's AD groups."""
+    """List glossary collections accessible by the current user."""
     auth: AuthCredentials = request.state.auth
-    ldap_groups = getattr(auth.user, "ldap_groups", None)
     glossary_service = await translation_service.get_glossary_service()
-    collections = await glossary_service.get_accessible_collections(ldap_groups)
+    collections = await glossary_service.get_accessible_collections_for_user(auth.user)
     return GlossaryCollectionListResponseSchema(
         collections=[
             GlossaryCollectionSchema(id=c.id, name=c.name, description=c.description)
@@ -1026,12 +1118,10 @@ async def list_glossary_entries(
     If collection_id is omitted, returns entries from all accessible collections.
     """
     auth: AuthCredentials = request.state.auth
-    ldap_groups = getattr(auth.user, "ldap_groups", None)
     svc = await translation_service.get_glossary_service()
 
     if collection_id:
-        allowed = svc._access_resolver.is_collection_allowed(collection_id, ldap_groups)
-        if not allowed:
+        if not await svc.can_read_collection(auth.user, collection_id):
             raise HTTPException(status_code=403, detail=f"Нет доступа к коллекции '{collection_id}'")
         entries = await svc.get_all_entries(collection_id=collection_id)
     else:
@@ -1069,12 +1159,8 @@ async def create_glossary_entry(
     from file_translator.domain.journal import JournalStage
 
     auth: AuthCredentials = request.state.auth
-    ldap_groups = getattr(auth.user, "ldap_groups", None)
     svc = await translation_service.get_glossary_service()
-    allowed = svc._access_resolver.is_collection_allowed(
-        collection_id, ldap_groups,
-    )
-    if not allowed:
+    if not await svc.can_write_collection(auth.user, collection_id):
         raise HTTPException(status_code=403, detail=f"Нет доступа к коллекции '{collection_id}'")
 
     username = getattr(auth.user, "username", "")
@@ -1115,9 +1201,9 @@ async def export_glossary(
     auth = request.state.auth
     svc = await translation_service.get_glossary_service()
 
-    # Check collection access permissions
-    ldap_groups = getattr(auth.user, "ldap_groups", None) if hasattr(auth, 'user') else None
-    if ldap_groups and not svc._access_resolver.is_collection_allowed(collection_id, ldap_groups):
+    # Read access is enforced unconditionally: users without any AD group are
+    # denied rather than silently granted access (task 2.3).
+    if not await svc.can_read_collection(auth.user, collection_id):
         raise HTTPException(status_code=403, detail=f"Доступ к коллекции запрещён: {collection_id}")
 
     entries = await svc.get_all_entries(collection_id)
@@ -1174,6 +1260,10 @@ async def import_glossary(
 
     svc = await translation_service.get_glossary_service()
 
+    # Write access is enforced before the CSV is parsed (write = explicit grant).
+    if not await svc.can_write_collection(auth.user, collection_id):
+        raise HTTPException(status_code=403, detail=f"Нет доступа к коллекции '{collection_id}'")
+
     # Verify collection exists before importing
     if collection_id and collection_id != "default":
         collections = await svc.collection_repository.find_all()
@@ -1200,7 +1290,6 @@ async def import_glossary(
             detail=f"CSV должен содержать колонки: {', '.join(sorted(required))}. Найдено: {reader.fieldnames}",
         )
 
-    svc = await translation_service.get_glossary_service()
     errors: list[str] = []
 
     rows_for_insert: list[tuple[int, str, str, str, str]] = []
@@ -1269,14 +1358,19 @@ async def import_glossary(
 
 @app.get("/glossary/{entry_id}", response_model=GlossaryEntrySchema)
 async def get_glossary_entry(
+    request: Request,
     entry_id: str,
     _: AuthCredentials = Depends(require_permission(Permission.VIEW_GLOSSARY)),
 ):
     """Get a specific glossary entry by ID."""
+    auth: AuthCredentials = request.state.auth
     svc = await translation_service.get_glossary_service()
     result = await svc.repository.find_by_id(entry_id)
     if not result:
         raise HTTPException(status_code=404, detail=f"Запись глоссария не найдена: {entry_id}")
+    entry_collection = getattr(result, "collection_id", "default")
+    if not await svc.can_read_collection(auth.user, entry_collection):
+        raise HTTPException(status_code=403, detail=f"Нет доступа к коллекции '{entry_collection}'")
     return GlossaryEntrySchema(
         id=result.id,
         ru_word=result.ru_word,
@@ -1301,7 +1395,10 @@ async def update_glossary_entry(
     """
     from file_translator.domain.journal import JournalStage
 
+    auth: AuthCredentials = request.state.auth
     svc = await translation_service.get_glossary_service()
+    if not await svc.can_write_collection(auth.user, collection_id):
+        raise HTTPException(status_code=403, detail=f"Нет доступа к коллекции '{collection_id}'")
     existing = await svc.repository.find_by_id(entry_id, table_name=svc._table_for(collection_id))
     if not existing:
         raise HTTPException(status_code=404, detail=f"Запись глоссария не найдена: {entry_id}")
@@ -1314,7 +1411,6 @@ async def update_glossary_entry(
         ch_word=entry.ch_word,
         collection_id=collection_id,
     )
-    auth: AuthCredentials = request.state.auth
     username = getattr(auth.user, "username", "")
     try:
         result = await svc.update_entry(
@@ -1346,6 +1442,7 @@ async def update_glossary_entry(
 
 @app.delete("/glossary/{entry_id}")
 async def delete_glossary_entry(
+    request: Request,
     entry_id: str,
     collection_id: str = "default",
     _: AuthCredentials = Depends(require_permission(Permission.EDIT_GLOSSARY)),
@@ -1353,7 +1450,10 @@ async def delete_glossary_entry(
     """Delete a glossary entry by ID."""
     from file_translator.domain.journal import JournalStage
 
+    auth: AuthCredentials = request.state.auth
     svc = await translation_service.get_glossary_service()
+    if not await svc.can_write_collection(auth.user, collection_id):
+        raise HTTPException(status_code=403, detail=f"Нет доступа к коллекции '{collection_id}'")
     existing = await svc.repository.find_by_id(entry_id, table_name=svc._table_for(collection_id))
     if not existing:
         raise HTTPException(status_code=404, detail=f"Запись глоссария не найдена: {entry_id}")
@@ -1543,6 +1643,11 @@ async def download_job_result(
     background_tasks.add_task(
         _cleanup_job_temp_dirs, job, job_id, str(output_path.parent)
     )
+
+    # Remove the completed record after a short grace (fix-ghost-completed-jobs):
+    # the result is consumed, so the job must exist nowhere afterwards — the
+    # ghost cards on reload were caused by the record outliving the file.
+    asyncio.create_task(_delete_job_after_grace(job_id))
 
     logger.info(f"Serving and cleaning up job {job_id}: {job.metadata.get('temp_dir')}")
     return FileResponse(
