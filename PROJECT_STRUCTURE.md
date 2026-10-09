@@ -21,7 +21,7 @@
 | Файл | Описание |
 |------|----------|
 | `__init__.py` | Инициализация доменного модуля |
-| `auth.py` | Модель пользователя с ролями (ADMIN, OPERATOR, VIEWER, API) и правами (TRANSLATE, MANAGE_USERS, SEND_FEEDBACK, VIEW_FEEDBACK и др.) |
+| `auth.py` | Модель пользователя с ролями (ADMIN, OPERATOR, VIEWER, API) и правами (TRANSLATE, MANAGE_SYSTEM, SEND_FEEDBACK, VIEW_FEEDBACK) |
 | `dxf_models.py` | Модели данных для DXF-файлов (слои, примитивы, текстовые блоки) |
 | `errors.py` | Кастомные исключения: TranslationError, DocumentParseError, TikalNotAvailableError, SaveDocumentError с reason |
 | `glossary.py` | Модель глоссария с коллекциями, аудитом (created_by/at, updated_by/at) и элементами для перевода терминов |

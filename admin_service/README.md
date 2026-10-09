@@ -13,7 +13,7 @@ API's lifecycle, and the admin surface is not exposed on the main API.
 |--------|--------------|
 | **Login** | Single admin account, httpOnly session cookie |
 | **Обзор** | Counters (users/active/roles/grants), glossary collections, config version, recent audit trail |
-| **Пользователи** | Assign role (marks `manual_role`), per-user permission overrides, activate/deactivate, reset role to the LDAP-derived one |
+| **Пользователи** | Assign role (by choosing it in the row — it applies at once, marks `manual_role`), effective rights per user with the personal raises and lowered rights spelled out, a two-tab rights dialog (`Функции` + `Глоссарии`) that saves only the deviation from the role and offers the matching role when rights *and* collection levels equal another role, "return to role" (drops personal rights and personal collection levels), activate/deactivate, reset role to the LDAP-derived one behind a confirmation that names the role it will restore |
 | **Роли** | Create / edit / delete custom roles with a permission pool, view members; built-ins are protected |
 | **Доступ к коллекциям** | Subject × collection matrix (roles, AD groups, users) with read/write toggles; each toggle saves immediately and bumps the config version |
 | **Настройки** | Current config version, password source, change the admin password |
@@ -40,8 +40,18 @@ keeps working.
 
 - Roles and grants live in MongoDB (`roles`, `grants`) — see the main change
   spec for the full model.
+- Grants are four-state levels: `0` nothing, `1` view, `2` create, `3` edit and
+  delete (import included). `read`/`write` flags are the legacy face of `1`/`3`;
+  level `2` has no flag pair and is only set through the rights dialog or the
+  API's `level` parameter.
+- A user's effective level per collection is `max(role, AD-group)`; a personal
+  grant with `subject_type=user` replaces that inheritance wholesale (it may
+  raise or lower it). `GET /api/users/{id}/access` reports the effective level
+  and where it came from (`role:x`, `group:x`, `personal`, `default`, `none`),
+  or `unrestricted: true` for the built-in `admin` role.
 - The matrix always includes the shared `default` collection: readable by
-  everyone, writable only through an explicit grant (seeded to role `admin`).
+  everyone (its level is floored at `1`, even by a personal level-`0` grant),
+  writable only through an explicit level-`3` grant (seeded to role `admin`).
 - The built-in `admin` role bypasses collection checks; the machine-facing
   `api` role is hidden from the UI and cannot be assigned here.
 - `manual_role` on a user means "assigned here, not from AD" — the next AD
@@ -57,16 +67,28 @@ POST   /api/auth/login | /api/auth/logout      GET /api/auth/session
 GET    /api/health                             GET /api/dashboard | /api/audit
 GET    /api/users                              POST /api/users/{id}/role
                                                POST /api/users/{id}/permissions
+                                               POST /api/users/{id}/reset-rights
                                                POST /api/users/{id}/active
                                                POST /api/users/{id}/reset-role
+GET    /api/users/{id}/access
 GET    /api/roles                              POST /api/roles
 PATCH  /api/roles/{name}                       DELETE /api/roles/{name}
 GET    /api/roles/{name}/members               GET /api/roles/permissions-pool
+                                               GET /api/roles/permission-labels
 GET    /api/access/matrix | /api/access/collections
 PUT    /api/access/grant                       DELETE /api/access/grant
 GET    /api/settings                           POST /api/settings/password
 GET    /api/docs/admin-guide
 ```
+
+`POST /api/users/{id}/permissions` takes the desired *effective* rights set,
+diffs it against the role at save time and writes only the deviation
+(`permissions` for raised, `denied` for lowered); the `RightsSaveResponse`
+carries `raised`/`lowered` counts and `suggestions` — role names whose
+permissions **and collection levels** now equal the user's, offered so the
+deviations can be replaced by the role itself. `POST /api/users/{id}/reset-rights`
+drops both personal rights and personal collection levels in one call.
+`PUT /api/access/grant` accepts `level` (0–3) alongside `read`/`write`.
 
 `GET /api/health` is public and reports Mongo counts plus the MySQL
 `glossary%` table list; it returns `degraded` if either datastore is
@@ -74,6 +96,9 @@ unreachable (the matrix then hides the collection list but stays usable).
 `GET /api/docs/admin-guide` returns the guide as `{title, html, sections}`, where
 `sections` is the outline of its headings — the page builds its tree from that
 outline rather than scraping the HTML, so the two cannot disagree.
+`GET /api/roles/permission-labels` maps each stored right to its wording, served
+from the domain enum, so the UI renders rights as words and keeps no second list
+of labels that could drift.
 
 ## Configuration
 

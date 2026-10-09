@@ -174,9 +174,8 @@ On the converter host: `FIRST_PDF_TIMEOUT=180` (recommended floor; per-size dead
 |--------|----------|-------------|
 | POST | `/api/auth/login` · `/api/auth/refresh` · `/api/auth/logout` | JWT login / refresh / logout |
 | GET | `/api/auth/me` | Current user |
-| GET/POST | `/auth/users` | Admin user management |
 | GET | `/health` · `/version` · `/help` | Health / version / help |
-| GET | `/journal` · `/journal/{date}` | Activity journal |
+| GET | `/journal` · `/journal/{date}` | Activity journal (any authenticated user) |
 | GET/POST | `/support/feedback` | Support feedback |
 
 ## Test Suite
