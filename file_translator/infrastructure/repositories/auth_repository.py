@@ -33,11 +33,18 @@ class MongoUserRepository(UserRepository):
         return user
 
     async def update(self, user: User) -> User | None:
+        """Write the user; return ``None`` only when no document was there.
+
+        ``modified_count`` is 0 both when the filter matched nothing and when the
+        stored document already held these values. Only ``matched_count`` tells
+        a failed write apart from an idempotent one, and a caller that cannot
+        tell them apart reports a silent no-op as a success.
+        """
         result = await self._users.update_one(
             {"user_id": user.user_id},
             {"$set": self._user_to_doc(user)},
         )
-        return user if result.modified_count > 0 else None
+        return user if result.matched_count > 0 else None
 
     async def delete(self, user_id: str) -> bool:
         result = await self._users.delete_one({"user_id": user_id})
@@ -63,6 +70,14 @@ class MongoUserRepository(UserRepository):
                 permissions.add(Permission(p))
             except ValueError:
                 continue
+        #: Documents written before this change have no `denied` field; they load
+        #: as "no lowerings", which is exactly the behaviour they had.
+        denied: set[Permission] = set()
+        for p in doc.get("denied") or []:
+            try:
+                denied.add(Permission(p))
+            except ValueError:
+                continue
         user = User(
             user_id=doc.get("user_id", ""),
             username=doc.get("username", ""),
@@ -70,6 +85,7 @@ class MongoUserRepository(UserRepository):
             role=role,
             role_name=raw_role,
             permissions=permissions,
+            denied=denied,
             is_active=doc.get("is_active", True),
             created_at=doc.get("created_at", ""),
             last_login_at=doc.get("last_login_at", ""),
@@ -95,6 +111,7 @@ class MongoUserRepository(UserRepository):
             "ldap_groups": getattr(user, "ldap_groups", None),
             "manual_role": bool(getattr(user, "manual_role", False)),
             "permissions": sorted(p.value for p in getattr(user, "permissions", set())),
+            "denied": sorted(p.value for p in getattr(user, "denied", set())),
         }
 
 

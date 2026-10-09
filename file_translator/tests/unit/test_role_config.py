@@ -423,6 +423,203 @@ async def test_foreign_collection_is_denied() -> None:
     assert not await resolver.can_write(user, "secret")
 
 
+# --- Access levels (0..3) ----------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_role_and_group_levels_combine_to_the_higher_one() -> None:
+    resolver = make_resolver(grants=[
+        GrantDoc(subject_type=SUBJECT_GROUP, subject="dept-a", collection="c1", level=1),
+        GrantDoc(subject_type=SUBJECT_ROLE, subject=ROLE_USER, collection="c1", level=3),
+    ])
+    user = make_user("joe", ROLE_USER)
+    user.ldap_groups = ["dept-a"]
+
+    levels = await resolver.resolve_levels(user)
+    assert levels is not None
+    assert levels["c1"] == 3
+
+
+@pytest.mark.asyncio
+async def test_personal_grant_lowers_a_user_below_their_role() -> None:
+    resolver = make_resolver(grants=[
+        GrantDoc(subject_type=SUBJECT_ROLE, subject=ROLE_USER, collection="c1", level=3),
+        GrantDoc(subject_type=SUBJECT_USER, subject="id-joe", collection="c1", level=1),
+    ])
+    user = make_user("joe", ROLE_USER)
+
+    levels = await resolver.resolve_levels(user)
+    assert levels is not None
+    assert levels["c1"] == 1
+    # The inherited value is still there when personal grants are set aside.
+    inherited = await resolver.resolve_levels(user, include_personal=False)
+    assert inherited is not None and inherited["c1"] == 3
+
+
+@pytest.mark.asyncio
+async def test_personal_grant_raises_a_user_above_their_role() -> None:
+    resolver = make_resolver(grants=[
+        GrantDoc(subject_type=SUBJECT_USER, subject="id-joe", collection="c2", level=3),
+    ])
+    user = make_user("joe", ROLE_USER)
+
+    levels = await resolver.resolve_levels(user)
+    assert levels is not None
+    assert levels["c2"] == 3
+
+
+@pytest.mark.asyncio
+async def test_absence_of_a_personal_grant_means_inheritance() -> None:
+    resolver = make_resolver(grants=[
+        GrantDoc(subject_type=SUBJECT_ROLE, subject=ROLE_USER, collection="c1", level=2),
+    ])
+    user = make_user("joe", ROLE_USER)
+
+    with_personal = await resolver.resolve_levels(user)
+    without = await resolver.resolve_levels(user, include_personal=False)
+    assert with_personal == without
+    assert with_personal is not None and with_personal["c1"] == 2
+
+
+@pytest.mark.asyncio
+async def test_default_stays_readable_under_a_personal_zero_grant() -> None:
+    resolver = make_resolver(grants=[
+        GrantDoc(subject_type=SUBJECT_USER, subject="id-joe", collection=DEFAULT_COLLECTION, level=0),
+    ])
+    user = make_user("joe", ROLE_USER)
+
+    assert await resolver.can_read(user, DEFAULT_COLLECTION)
+    assert not await resolver.can_create(user, DEFAULT_COLLECTION)
+
+
+@pytest.mark.asyncio
+async def test_admin_levels_are_unrestricted() -> None:
+    resolver = make_resolver()
+    user = make_user("root", RoleType.ADMIN.value)
+
+    assert await resolver.resolve_levels(user) is None
+    assert await resolver.can_create(user, "anything")
+
+
+@pytest.mark.asyncio
+async def test_each_level_threshold_is_enforced() -> None:
+    for level, readable, creatable, modifiable in (
+        (0, False, False, False),
+        (1, True, False, False),
+        (2, True, True, False),
+        (3, True, True, True),
+    ):
+        resolver = make_resolver(grants=[
+            GrantDoc(subject_type=SUBJECT_USER, subject="id-joe", collection="c1", level=level),
+        ])
+        user = make_user("joe", ROLE_USER)
+        assert await resolver.can_read(user, "c1") is readable, level
+        assert await resolver.can_create(user, "c1") is creatable, level
+        assert await resolver.can_modify(user, "c1") is modifiable, level
+        # The old name still means "may edit and delete".
+        assert await resolver.can_write(user, "c1") is modifiable, level
+
+
+# --- Per-collection sources (task 8.1) ---------------------------------------
+
+@pytest.mark.asyncio
+async def test_sources_name_the_document_kind_that_supplies_the_level() -> None:
+    resolver = make_resolver(grants=[
+        GrantDoc(subject_type=SUBJECT_ROLE, subject=ROLE_USER, collection="c1", level=2),
+        GrantDoc(subject_type=SUBJECT_GROUP, subject="dept-a", collection="c2", level=3),
+        GrantDoc(subject_type=SUBJECT_USER, subject="id-joe", collection="c3", level=1),
+    ])
+    user = make_user("joe", ROLE_USER)
+    user.ldap_groups = ["dept-a"]
+
+    detailed = await resolver.resolve_levels_with_sources(user)
+    assert detailed is not None
+    assert detailed["c1"] == (2, f"role:{ROLE_USER}")
+    assert detailed["c2"] == (3, "group:dept-a")
+    assert detailed["c3"] == (1, "personal")
+    # Nobody granted it, so it does not appear here — the endpoint adds it
+    # as level 0 with the source `none`.
+    assert "c9" not in detailed
+
+
+@pytest.mark.asyncio
+async def test_source_follows_the_stronger_of_role_and_group() -> None:
+    resolver = make_resolver(grants=[
+        GrantDoc(subject_type=SUBJECT_ROLE, subject=ROLE_USER, collection="c1", level=1),
+        GrantDoc(subject_type=SUBJECT_GROUP, subject="dept-a", collection="c1", level=3),
+    ])
+    user = make_user("joe", ROLE_USER)
+    user.ldap_groups = ["dept-a"]
+
+    detailed = await resolver.resolve_levels_with_sources(user)
+    assert detailed is not None
+    assert detailed["c1"] == (3, "group:dept-a")
+
+
+@pytest.mark.asyncio
+async def test_personal_source_wins_even_when_it_lowers() -> None:
+    resolver = make_resolver(grants=[
+        GrantDoc(subject_type=SUBJECT_ROLE, subject=ROLE_USER, collection="c1", level=3),
+        GrantDoc(subject_type=SUBJECT_USER, subject="id-joe", collection="c1", level=1),
+    ])
+    user = make_user("joe", ROLE_USER)
+
+    detailed = await resolver.resolve_levels_with_sources(user)
+    assert detailed is not None
+    assert detailed["c1"] == (1, "personal")
+
+
+@pytest.mark.asyncio
+async def test_default_source_is_the_floor_and_invents_no_grantor() -> None:
+    resolver = make_resolver()
+    user = make_user("joe", ROLE_USER)
+
+    detailed = await resolver.resolve_levels_with_sources(user)
+    assert detailed is not None
+    assert detailed[DEFAULT_COLLECTION] == (1, "default")
+
+
+@pytest.mark.asyncio
+async def test_sources_agree_with_the_levels_enforcement_uses() -> None:
+    """The dialog may not explain a number `resolve_levels` would dispute."""
+    grants = [
+        GrantDoc(subject_type=SUBJECT_ROLE, subject=ROLE_USER, collection="c1", level=2),
+        GrantDoc(subject_type=SUBJECT_GROUP, subject="dept-a", collection="c1", level=3),
+        GrantDoc(subject_type=SUBJECT_USER, subject="id-joe", collection="c2", level=0),
+        GrantDoc(subject_type=SUBJECT_ROLE, subject=ROLE_USER, collection="c3", level=0),
+    ]
+    resolver = make_resolver(grants=grants)
+    user = make_user("joe", ROLE_USER)
+    user.ldap_groups = ["dept-a"]
+
+    detailed = await resolver.resolve_levels_with_sources(user)
+    levels = await resolver.resolve_levels(user)
+    assert detailed is not None and levels is not None
+    assert {c: lvl for c, (lvl, _) in detailed.items()} == levels
+    assert levels["c1"] == 3
+
+
+@pytest.mark.asyncio
+async def test_admin_source_view_is_unrestricted() -> None:
+    resolver = make_resolver()
+    user = make_user("root", RoleType.ADMIN.value)
+
+    assert await resolver.resolve_levels_with_sources(user) is None
+
+
+@pytest.mark.asyncio
+async def test_zero_level_group_grant_keeps_its_group_label() -> None:
+    """Toggling a grant off stores it at level 0 — it still names a document."""
+    resolver = make_resolver(grants=[
+        GrantDoc(subject_type=SUBJECT_GROUP, subject="dept-a", collection="c1", level=0),
+    ])
+    user = make_user("joe", ROLE_USER)
+    user.ldap_groups = ["dept-a"]
+
+    detailed = await resolver.resolve_levels_with_sources(user)
+    assert detailed is not None
+    assert detailed["c1"] == (0, "group:dept-a")
+
+
 # --- Seeding -----------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -466,6 +663,62 @@ async def test_seed_grants_skipped_when_store_not_empty() -> None:
     created = await seed_grants(repo, {"dept-a": ["c1"]})
     assert created == 0
     assert len(repo.grants) == 1
+
+
+@pytest.mark.asyncio
+async def test_seeded_grants_carry_level_3() -> None:
+    """The seed grants full access; the level must say the same thing."""
+    repo = FakeGrantRepository()
+    await seed_grants(repo, {"dept-a": ["c1"]})
+
+    assert {g.level for g in repo.grants} == {3}
+    assert all(g.to_dict()["level"] == 3 for g in repo.grants)
+
+
+def test_legacy_flags_only_grant_loads_to_its_level() -> None:
+    """Documents written before `level` existed keep their meaning."""
+    full = GrantDoc.from_dict(
+        {"subject_type": "group", "subject": "g", "collection": "c",
+         "read": True, "write": True}
+    )
+    read_only = GrantDoc.from_dict(
+        {"subject_type": "group", "subject": "g", "collection": "c",
+         "read": True, "write": False}
+    )
+    empty = GrantDoc.from_dict({"subject_type": "group", "subject": "g", "collection": "c"})
+
+    assert full is not None and full.level == 3
+    assert read_only is not None and read_only.level == 1
+    assert empty is not None and empty.level == 0
+
+
+def test_level_round_trip_reproduces_the_flags() -> None:
+    """Dual-writing has to stay consistent, or a mixed-version window bites."""
+    for level, read, write in ((0, False, False), (1, True, False),
+                               (2, True, False), (3, True, True)):
+        doc = GrantDoc(subject_type="role", subject="r", collection="c", level=level)
+        assert (doc.read, doc.write) == (read, write)
+
+        payload = doc.to_dict()
+        assert payload["level"] == level
+        assert payload["read"] is read
+        assert payload["write"] is write
+
+        again = GrantDoc.from_dict(payload)
+        assert again is not None
+        assert (again.level, again.read, again.write) == (level, read, write)
+
+
+def test_level_wins_when_both_representations_are_present() -> None:
+    """The authority is `level`; a stale flag pair must not override it."""
+    grant = GrantDoc.from_dict(
+        {"subject_type": "user", "subject": "u", "collection": "c",
+         "level": 2, "read": False, "write": True}
+    )
+    assert grant is not None
+    assert grant.level == 2
+    assert grant.read is True
+    assert grant.write is False
 
 
 def test_load_collection_map_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -662,7 +915,7 @@ def test_user_doc_roundtrip_preserves_manual_role_and_permissions() -> None:
         "display_name": "Joe",
         "role": "user",
         "manual_role": True,
-        "permissions": [Permission.VIEW_GLOSSARY.value, Permission.TRANSLATE.value],
+        "permissions": [Permission.MANAGE_SYSTEM.value, Permission.TRANSLATE.value],
         "is_active": True,
         "ldap_groups": ["dept-a"],
         "created_at": "2026-01-01T00:00:00",
@@ -670,13 +923,13 @@ def test_user_doc_roundtrip_preserves_manual_role_and_permissions() -> None:
     user = MongoUserRepository._doc_to_user(doc)
     assert user.role_name == "user"
     assert user.manual_role is True
-    assert user.permissions == {Permission.VIEW_GLOSSARY, Permission.TRANSLATE}
+    assert user.permissions == {Permission.MANAGE_SYSTEM, Permission.TRANSLATE}
 
     back = MongoUserRepository._user_to_doc(user)
     assert back["role"] == "user"
     assert back["manual_role"] is True
     assert sorted(back["permissions"]) == sorted(
-        [Permission.VIEW_GLOSSARY.value, Permission.TRANSLATE.value]
+        [Permission.MANAGE_SYSTEM.value, Permission.TRANSLATE.value]
     )
     assert back["ldap_groups"] == ["dept-a"]
 
@@ -697,6 +950,95 @@ def test_user_doc_defaults_manual_role_false() -> None:
 
     user = MongoUserRepository._doc_to_user({"user_id": "id-3", "username": "old"})
     assert user.manual_role is False
+
+
+def test_legacy_user_doc_without_denied_loads_as_no_lowerings() -> None:
+    """A pre-change document has no `denied` key and must keep today's rights."""
+    from file_translator.infrastructure.repositories.auth_repository import MongoUserRepository
+
+    legacy = {"user_id": "id-4", "username": "legacy", "role": "user",
+              "permissions": [Permission.TRANSLATE.value]}
+    user = MongoUserRepository._doc_to_user(legacy)
+    assert user.denied == set()
+    assert user.effective_permissions == {Permission.TRANSLATE, Permission.SEND_FEEDBACK}
+
+    back = MongoUserRepository._user_to_doc(user)
+    assert back["denied"] == []
+    assert back["permissions"] == [Permission.TRANSLATE.value]
+
+
+def test_user_doc_roundtrip_preserves_denied() -> None:
+    from file_translator.infrastructure.repositories.auth_repository import MongoUserRepository
+
+    doc = {"user_id": "id-5", "username": "lowered", "role": "user",
+           "permissions": [Permission.MANAGE_SYSTEM.value],
+           "denied": [Permission.SEND_FEEDBACK.value]}
+    user = MongoUserRepository._doc_to_user(doc)
+    assert user.denied == {Permission.SEND_FEEDBACK}
+
+    back = MongoUserRepository._user_to_doc(user)
+    assert back["denied"] == [Permission.SEND_FEEDBACK.value]
+    assert MongoUserRepository._doc_to_user(back).denied == user.denied
+
+
+def test_every_right_has_a_human_label() -> None:
+    """A right without wording would render as its raw value in the admin UI."""
+    from file_translator.domain.auth import PERMISSION_LABELS
+
+    missing = {p.value for p in Permission} - set(PERMISSION_LABELS)
+    assert not missing, f"rights without a label: {sorted(missing)}"
+    assert all(label.strip() for label in PERMISSION_LABELS.values())
+    # Labels are wording, not the value again.
+    assert all(label != value for value, label in PERMISSION_LABELS.items())
+
+
+# --- MongoUserRepository.update: failed write vs idempotent write ------------
+
+
+class _UpdateResult:
+    def __init__(self, matched: int, modified: int) -> None:
+        self.matched_count = matched
+        self.modified_count = modified
+
+
+class _UsersStub:
+    """Async stand-in for the ``users`` collection's ``update_one``."""
+
+    def __init__(self, result: _UpdateResult) -> None:
+        self._result = result
+        self.calls: list[tuple[dict, dict]] = []
+
+    async def update_one(self, flt: dict, update: dict) -> _UpdateResult:
+        self.calls.append((flt, update))
+        return self._result
+
+
+def _user_repository(result: _UpdateResult):
+    from types import SimpleNamespace
+
+    from file_translator.infrastructure.repositories.auth_repository import MongoUserRepository
+
+    collection = _UsersStub(result)
+    return MongoUserRepository(SimpleNamespace(users=collection)), collection  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_update_reports_a_write_that_matched_no_document() -> None:
+    repo, collection = _user_repository(_UpdateResult(matched=0, modified=0))
+
+    assert await repo.update(make_user("ghost", "admin")) is None
+    filter_used, update_used = collection.calls[0]
+    assert filter_used == {"user_id": make_user("ghost", "admin").user_id}
+    assert update_used["$set"]["role"] == "admin"
+
+
+@pytest.mark.asyncio
+async def test_update_reports_an_idempotent_write_as_written() -> None:
+    """Matched but unchanged: the document is there and holds these values."""
+    repo, _ = _user_repository(_UpdateResult(matched=1, modified=0))
+
+    user = make_user("joe", "user")
+    assert await repo.update(user) is user
 
 
 # --- Legacy role migration ---------------------------------------------------

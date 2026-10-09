@@ -236,6 +236,7 @@
   <div class="card">
     <h3><span class="material-symbols-outlined" aria-hidden="true">forum</span> Написать сообщение</h3>
     <div id="notAuth" class="empty">Для отправки сообщения необходимо <a href="/" style="color:var(--c-primary);">войти в систему</a>.</div>
+    <div id="notAllowed" class="empty" style="display:none;">У вашей учётной записи нет права отправлять сообщения. Обратитесь к администратору.</div>
     <form id="feedbackForm" style="display:none;">
       <textarea id="msgInput" placeholder="Опишите ваше предложение, замечание или жалобу...  (Ctrl+V — вставить скриншот, можно и перетащить файл)" maxlength="5000"></textarea>
       <input type="file" id="attachInput" accept="image/png,image/jpeg,image/webp,image/gif" multiple style="display:none;">
@@ -358,6 +359,7 @@ async function ensureAuth() {
 // ── Form ──
 const form = document.getElementById('feedbackForm');
 const notAuth = document.getElementById('notAuth');
+const notAllowed = document.getElementById('notAllowed');
 const msgInput = document.getElementById('msgInput');
 const formError = document.getElementById('formError');
 const formSuccess = document.getElementById('formSuccess');
@@ -490,6 +492,9 @@ form.addEventListener('submit', async (e) => {
         }
       }
       notAuth.style.display = 'block';
+      form.style.display = 'none';
+    } else if (resp.status === 403) {
+      notAllowed.style.display = 'block';
       form.style.display = 'none';
     } else {
       const err = await resp.json().catch(() => ({}));

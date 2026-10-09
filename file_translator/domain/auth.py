@@ -9,19 +9,28 @@ from typing import Any
 
 
 class Permission(Enum):
-    """Granular permissions for the translation system."""
-    
-    TRANSLATE = "translate"                   # Submit translation jobs
-    VIEW_GLOSSARY = "glossary:view"           # Read glossary entries
-    EDIT_GLOSSARY = "glossary:edit"           # Create/update/delete glossary
-    VIEW_JOBS = "jobs:view"                   # View job status/history
-    CANCEL_JOBS = "jobs:cancel"               # Cancel any job
-    VIEW_JOURNAL = "journal:view"             # Read processing journal
-    VIEW_USERS = "users:view"                 # List users
-    MANAGE_USERS = "users:manage"             # Create/update/delete users
-    MANAGE_SYSTEM = "system:manage"           # System-level operations
+    """Granular permissions for the translation system.
+
+    Deliberately small catalog: the whole per-user translation workflow is one
+    right (``translate``), glossary access is governed by per-collection grants
+    (no global right), and the journal is readable by every authenticated user.
+    """
+
+    TRANSLATE = "translate"                   # Submit translation jobs & manage own jobs
+    MANAGE_SYSTEM = "system:manage"           # System-level operations (incl. all users' jobs)
     SEND_FEEDBACK = "feedback:send"           # Submit support feedback
     VIEW_FEEDBACK = "feedback:view"           # View all feedback
+
+
+#: Human-readable wording for each right, kept beside the values it names so a
+#: right cannot be added without one. The admin API serves it from here instead
+#: of the browser holding a second copy that would drift.
+PERMISSION_LABELS: dict[str, str] = {
+    Permission.TRANSLATE.value: "Отправлять документы на перевод",
+    Permission.MANAGE_SYSTEM.value: "Системные операции",
+    Permission.SEND_FEEDBACK.value: "Отправлять отзыв",
+    Permission.VIEW_FEEDBACK.value: "Просмотр всех отзывов",
+}
 
 
 class RoleType(Enum):
@@ -35,8 +44,8 @@ class RoleType(Enum):
     
     ADMIN = "admin"           # Full access
     USER = "user"             # Standard permissions for people (runtime role)
-    OPERATOR = "operator"     # Legacy: can translate, view/manage own jobs, view glossary
-    VIEWER = "viewer"         # Read-only access to jobs and glossary
+    OPERATOR = "operator"     # Legacy: can translate and send feedback
+    VIEWER = "viewer"         # Legacy: can send feedback only
     API = "api"               # Machine account: translate only
 
 
@@ -44,31 +53,17 @@ _ROLE_PERMISSIONS: dict[RoleType, set[Permission]] = {
     RoleType.ADMIN: set(Permission),
     RoleType.USER: {
         Permission.TRANSLATE,
-        Permission.VIEW_GLOSSARY,
-        Permission.EDIT_GLOSSARY,
-        Permission.VIEW_JOBS,
-        Permission.CANCEL_JOBS,
-        Permission.VIEW_JOURNAL,
         Permission.SEND_FEEDBACK,
     },
     RoleType.OPERATOR: {
         Permission.TRANSLATE,
-        Permission.VIEW_GLOSSARY,
-        Permission.EDIT_GLOSSARY,
-        Permission.VIEW_JOBS,
-        Permission.CANCEL_JOBS,
-        Permission.VIEW_JOURNAL,
         Permission.SEND_FEEDBACK,
     },
     RoleType.VIEWER: {
-        Permission.VIEW_GLOSSARY,
-        Permission.VIEW_JOBS,
-        Permission.VIEW_JOURNAL,
         Permission.SEND_FEEDBACK,
     },
     RoleType.API: {
         Permission.TRANSLATE,
-        Permission.VIEW_JOBS,
     },
 }
 
@@ -87,6 +82,12 @@ class User:
     display_name: str = ""
     role: RoleType = RoleType.VIEWER
     permissions: set[Permission] = field(default_factory=set)
+    #: Personal *deviations* from the role, downward: rights the role grants but
+    #: this user specifically does not have. Kept separate from ``permissions``
+    #: (which holds only raises) so that a right the role provides is never
+    #: duplicated on the user document, and so that lowering a right for one
+    #: person cannot touch anyone else in the role.
+    denied: set[Permission] = field(default_factory=set)
     password_hash: str = ""
     ldap_groups: list[str] | None = None
     is_active: bool = True
@@ -101,8 +102,19 @@ class User:
     
     @property
     def effective_permissions(self) -> set[Permission]:
-        """Get all permissions (role-based + individual grants)."""
-        return get_permissions_for_role(self.role) | self.permissions
+        """Effective rights: the role's pool, minus personal denials, plus
+        personal raises.
+
+        A right both denied and raised resolves as granted (the raise wins),
+        which is the resolution ``POST /users/{id}/permissions`` guarantees by
+        deriving the two sets from one target set.
+        """
+        return (get_permissions_for_role(self.role) - self.denied) | self.permissions
+
+    @property
+    def has_deviations(self) -> bool:
+        """True when the user's effective rights differ from their role's."""
+        return bool(self.denied or self.permissions)
     
     def has_permission(self, permission: Permission) -> bool:
         """Check if user has a specific permission."""

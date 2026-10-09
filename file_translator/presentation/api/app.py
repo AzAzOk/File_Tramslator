@@ -59,15 +59,13 @@ from file_translator.application.schemas import (
     RefreshTokenResponseSchema,
     TranslationRequestSchema,
     TranslationResponseSchema,
-    UserCreateSchema,
-    UserSchema,
     ValidationReportSchema,
 )
 from file_translator.application.auth_service import AuthService
 from file_translator.application.glossary_service import DuplicateError, GlossaryError, LanguageMismatchError
 from file_translator.application.service import TranslationService
 from file_translator.application.user_queue import UserJobQueue
-from file_translator.domain.auth import Permission, RoleType
+from file_translator.domain.auth import Permission
 from file_translator.domain.glossary import GlossaryEntry
 from file_translator.domain.job import Job, JobStatus
 from file_translator.presentation.api.dependencies import get_current_user, require_permission
@@ -824,69 +822,6 @@ async def redirect_to_help():
     return JSONResponse(content={"detail": "Help URL not configured"}, status_code=404)
 
 
-# --- User management endpoints (admin only) ---
-
-@app.get("/auth/users", response_model=list[UserSchema])
-async def list_users(
-    request: Request,
-    _: AuthCredentials = Depends(require_permission(Permission.VIEW_USERS)),
-):
-    """List all registered users (admin only)."""
-    svc = getattr(app.state, "auth_service", None)
-    if not svc:
-        raise HTTPException(status_code=500, detail="Сервис аутентификации недоступен")
-    users = await svc.list_users()
-    return [
-        UserSchema(
-            user_id=u.user_id,
-            username=u.username,
-            display_name=u.display_name,
-            role=u.role.value,
-            is_active=u.is_active,
-            created_at=u.created_at,
-            last_login_at=u.last_login_at or "",
-            ldap_groups=getattr(u, "ldap_groups", None),
-        )
-        for u in users
-    ]
-
-
-@app.post("/auth/users", response_model=UserSchema, status_code=201)
-async def create_user(
-    request: Request,
-    user_data: UserCreateSchema,
-    _: AuthCredentials = Depends(require_permission(Permission.MANAGE_USERS)),
-):
-    """Create a new user (admin only)."""
-    svc = getattr(app.state, "auth_service", None)
-    if not svc:
-        raise HTTPException(status_code=500, detail="Сервис аутентификации недоступен")
-
-    valid_roles = {"admin": RoleType.ADMIN, "operator": RoleType.OPERATOR,
-                   "viewer": RoleType.VIEWER, "api": RoleType.API}
-    role = valid_roles.get(user_data.role.lower())
-    if not role:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Неверная роль '{user_data.role}'. Допустимые значения: {', '.join(valid_roles)}",
-        )
-
-    user = await svc.create_user(
-        username=user_data.username,
-        password=user_data.password,
-        role=role,
-        display_name=user_data.display_name,
-    )
-    return UserSchema(
-        user_id=user.user_id,
-        username=user.username,
-        display_name=user.display_name,
-        role=user.role.value,
-        is_active=user.is_active,
-        created_at=user.created_at,
-    )
-
-
 @app.post("/translate")
 async def translate_document(
     auth: AuthCredentials = Depends(require_permission(Permission.TRANSLATE)),
@@ -1093,7 +1028,7 @@ async def validate_document(
 @app.get("/glossary/collections", response_model=GlossaryCollectionListResponseSchema)
 async def list_glossary_collections(
     request: Request,
-    _: AuthCredentials = Depends(require_permission(Permission.VIEW_GLOSSARY)),
+    _: AuthCredentials = Depends(get_current_user),
 ):
     """List glossary collections accessible by the current user."""
     auth: AuthCredentials = request.state.auth
@@ -1111,7 +1046,7 @@ async def list_glossary_collections(
 async def list_glossary_entries(
     request: Request,
     collection_id: str = "",
-    _: AuthCredentials = Depends(require_permission(Permission.VIEW_GLOSSARY)),
+    _: AuthCredentials = Depends(get_current_user),
 ):
     """List all glossary entries, optionally filtered by collection.
     
@@ -1148,7 +1083,7 @@ async def create_glossary_entry(
     request: Request,
     entry: GlossaryCreateSchema,
     collection_id: str = "default",
-    _: AuthCredentials = Depends(require_permission(Permission.EDIT_GLOSSARY)),
+    _: AuthCredentials = Depends(get_current_user),
 ):
     """Create a new glossary entry.
     
@@ -1160,7 +1095,8 @@ async def create_glossary_entry(
 
     auth: AuthCredentials = request.state.auth
     svc = await translation_service.get_glossary_service()
-    if not await svc.can_write_collection(auth.user, collection_id):
+    # Adding an entry must not modify what is already there → level 2, not 3.
+    if not await svc.can_create_collection(auth.user, collection_id):
         raise HTTPException(status_code=403, detail=f"Нет доступа к коллекции '{collection_id}'")
 
     username = getattr(auth.user, "username", "")
@@ -1193,7 +1129,7 @@ async def create_glossary_entry(
 async def export_glossary(
     request: Request,
     collection_id: str = "default",
-    _: AuthCredentials = Depends(require_permission(Permission.VIEW_GLOSSARY)),
+    _: AuthCredentials = Depends(get_current_user),
 ):
     """Export glossary entries to CSV file."""
     from file_translator.domain.journal import JournalStage
@@ -1243,7 +1179,7 @@ async def import_glossary(
     file: UploadFile = File(...),
     collection_id: str = Form("default"),
     new_collection_name: str = Form(""),
-    _: AuthCredentials = Depends(require_permission(Permission.EDIT_GLOSSARY)),
+    _: AuthCredentials = Depends(get_current_user),
 ):
     """Import glossary entries from a CSV file (appends to existing)."""
     from file_translator.domain.journal import JournalStage
@@ -1260,8 +1196,9 @@ async def import_glossary(
 
     svc = await translation_service.get_glossary_service()
 
-    # Write access is enforced before the CSV is parsed (write = explicit grant).
-    if not await svc.can_write_collection(auth.user, collection_id):
+    # An import may rewrite rows that already exist → level 3, checked before
+    # the CSV is parsed so an unauthorised upload is never read into memory.
+    if not await svc.can_modify_collection(auth.user, collection_id):
         raise HTTPException(status_code=403, detail=f"Нет доступа к коллекции '{collection_id}'")
 
     # Verify collection exists before importing
@@ -1360,7 +1297,7 @@ async def import_glossary(
 async def get_glossary_entry(
     request: Request,
     entry_id: str,
-    _: AuthCredentials = Depends(require_permission(Permission.VIEW_GLOSSARY)),
+    _: AuthCredentials = Depends(get_current_user),
 ):
     """Get a specific glossary entry by ID."""
     auth: AuthCredentials = request.state.auth
@@ -1387,7 +1324,7 @@ async def update_glossary_entry(
     entry_id: str,
     entry: GlossaryUpdateSchema,
     collection_id: str = "default",
-    _: AuthCredentials = Depends(require_permission(Permission.EDIT_GLOSSARY)),
+    _: AuthCredentials = Depends(get_current_user),
 ):
     """Update an existing glossary entry.
     
@@ -1397,7 +1334,8 @@ async def update_glossary_entry(
 
     auth: AuthCredentials = request.state.auth
     svc = await translation_service.get_glossary_service()
-    if not await svc.can_write_collection(auth.user, collection_id):
+    # Full replacement of an existing row → level 3.
+    if not await svc.can_modify_collection(auth.user, collection_id):
         raise HTTPException(status_code=403, detail=f"Нет доступа к коллекции '{collection_id}'")
     existing = await svc.repository.find_by_id(entry_id, table_name=svc._table_for(collection_id))
     if not existing:
@@ -1445,14 +1383,15 @@ async def delete_glossary_entry(
     request: Request,
     entry_id: str,
     collection_id: str = "default",
-    _: AuthCredentials = Depends(require_permission(Permission.EDIT_GLOSSARY)),
+    _: AuthCredentials = Depends(get_current_user),
 ):
     """Delete a glossary entry by ID."""
     from file_translator.domain.journal import JournalStage
 
     auth: AuthCredentials = request.state.auth
     svc = await translation_service.get_glossary_service()
-    if not await svc.can_write_collection(auth.user, collection_id):
+    # Removing an existing row → level 3.
+    if not await svc.can_modify_collection(auth.user, collection_id):
         raise HTTPException(status_code=403, detail=f"Нет доступа к коллекции '{collection_id}'")
     existing = await svc.repository.find_by_id(entry_id, table_name=svc._table_for(collection_id))
     if not existing:
@@ -1472,7 +1411,7 @@ async def delete_glossary_entry(
 @app.get("/journal/{date}", response_model=JournalResponseSchema)
 async def get_journal(
     date: str,
-    _: AuthCredentials = Depends(require_permission(Permission.VIEW_JOURNAL)),
+    _: AuthCredentials = Depends(get_current_user),
 ):
     """Get processing journal for a specific date (YYYY-MM-DD)."""
     journal = await translation_service.journal_service.get_journal_for_date(date)
@@ -1496,7 +1435,7 @@ async def get_journal(
 
 @app.get("/journal", response_model=JournalResponseSchema)
 async def get_latest_journal(
-    _: AuthCredentials = Depends(require_permission(Permission.VIEW_JOURNAL)),
+    _: AuthCredentials = Depends(get_current_user),
 ):
     """Get the most recent processing journal."""
     journals = await translation_service.journal_service.get_recent_journals(limit=1)
@@ -1562,10 +1501,16 @@ def _check_job_owner(job: Job, auth: AuthCredentials) -> None:
 
 @app.get("/jobs", response_model=list[JobStatusSchema])
 async def list_jobs(
-    _: AuthCredentials = Depends(require_permission(Permission.VIEW_JOBS)),
+    auth: AuthCredentials = Depends(require_permission(Permission.TRANSLATE)),
 ):
-    """List recent translation jobs."""
+    """List recent translation jobs.
+
+    Server-side scoping: ordinary users see only their own jobs; callers with
+    ``system:manage`` see everyone's (authorization, job-listing requirement).
+    """
     jobs = await translation_service.job_manager.get_recent_jobs(limit=50)
+    if not auth.user.has_permission(Permission.MANAGE_SYSTEM):
+        jobs = [j for j in jobs if getattr(j, "user_id", None) == auth.user.user_id]
     return [_job_to_schema(j) for j in jobs]
 
 
@@ -1573,7 +1518,7 @@ async def list_jobs(
 async def get_job_status(
     job_id: str,
     request: Request,
-    _: AuthCredentials = Depends(require_permission(Permission.VIEW_JOBS)),
+    _: AuthCredentials = Depends(require_permission(Permission.TRANSLATE)),
 ):
     """Get job status, progress, ETA, and queue position."""
     job = await translation_service.job_manager.get_job(job_id)
@@ -1589,7 +1534,7 @@ async def get_job_status(
 async def cancel_job(
     job_id: str,
     request: Request,
-    _: AuthCredentials = Depends(require_permission(Permission.CANCEL_JOBS)),
+    _: AuthCredentials = Depends(require_permission(Permission.TRANSLATE)),
 ):
     """Cancel an active or queued translation job."""
     job = await translation_service.job_manager.get_job(job_id)
@@ -1620,7 +1565,7 @@ async def download_job_result(
     job_id: str,
     request: Request,
     background_tasks: BackgroundTasks,
-    _: AuthCredentials = Depends(require_permission(Permission.VIEW_JOBS)),
+    _: AuthCredentials = Depends(require_permission(Permission.TRANSLATE)),
 ):
     """Download the result of a completed job.
 
@@ -1756,7 +1701,7 @@ async def _feedback_attachment_meta(feedback_id: int) -> list[FeedbackAttachment
 async def send_feedback(
     message: str = Form(...),
     files: list[UploadFile] = File(default=[]),
-    auth: AuthCredentials = Depends(get_current_user),
+    auth: AuthCredentials = Depends(require_permission(Permission.SEND_FEEDBACK)),
 ):
     msg = (message or "").strip()
     if not msg:

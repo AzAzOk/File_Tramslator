@@ -37,8 +37,15 @@ SUBJECT_ROLE = "role"
 SUBJECT_USER = "user"
 SUBJECT_TYPES = (SUBJECT_GROUP, SUBJECT_ROLE, SUBJECT_USER)
 
-# The collection readable by every authenticated user with glossary view.
+# The collection readable by every authenticated user (no grant needed).
 DEFAULT_COLLECTION = "default"
+
+# Ordered access levels. Each level implies every lower one, so a subject
+# holding level 3 may do everything levels 1 and 2 allow.
+ACCESS_LEVEL_NONE = 0
+ACCESS_LEVEL_VIEW = 1
+ACCESS_LEVEL_ADD = 2
+ACCESS_LEVEL_MODIFY = 3
 
 
 def _permission_values(*permissions: Permission) -> list[str]:
@@ -55,16 +62,11 @@ def _default_role(name: str) -> dict[str, Any]:
         # standard permissions for a person using the system.
         permissions = _permission_values(
             Permission.TRANSLATE,
-            Permission.VIEW_GLOSSARY,
-            Permission.EDIT_GLOSSARY,
-            Permission.VIEW_JOBS,
-            Permission.CANCEL_JOBS,
-            Permission.VIEW_JOURNAL,
             Permission.SEND_FEEDBACK,
         )
         description = "Standard permissions for people"
     elif name == RoleType.API.value:
-        permissions = _permission_values(Permission.TRANSLATE, Permission.VIEW_JOBS)
+        permissions = _permission_values(Permission.TRANSLATE)
         description = "Machine-account role: translate only"
     else:  # legacy compatibility (operator/viewer) — resolved to user internally
         permissions = _permission_values(
@@ -129,12 +131,32 @@ class RoleDoc:
         }
 
 
+def level_from_flags(read: bool, write: bool) -> int:
+    """Map the legacy two-flag grant to the ordered level it stood for.
+
+    Before this change ``write`` already meant create *and* update *and*
+    delete, so a stored pair could only ever be one of these four levels —
+    which is exactly why an intermediate level had to become a field of its own.
+    """
+    if write:
+        return ACCESS_LEVEL_MODIFY
+    if read:
+        return ACCESS_LEVEL_VIEW
+    return ACCESS_LEVEL_NONE
+
+
 @dataclass
 class GrantDoc:
     """A collection-grant document as stored in MongoDB.
 
     ``subject_type`` is one of ``group``, ``role`` or ``user``; ``subject`` is
     the identifier (AD group CN, role name or user id).
+
+    ``level`` is the authority: ``0`` none, ``1`` view, ``2`` add entries,
+    ``3`` edit and delete. The two booleans are still written alongside it so
+    that a container running the previous version keeps seeing the access it
+    understood; ``level=None`` on construction means "derive them from the
+    flags", which is how a document written before this change is loaded.
     """
 
     subject_type: str
@@ -142,17 +164,28 @@ class GrantDoc:
     collection: str
     read: bool = False
     write: bool = False
+    level: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.level is None:
+            self.level = level_from_flags(self.read, self.write)
+        else:
+            self.level = max(ACCESS_LEVEL_NONE, min(ACCESS_LEVEL_MODIFY, int(self.level)))
+            self.read = self.level >= ACCESS_LEVEL_VIEW
+            self.write = self.level >= ACCESS_LEVEL_MODIFY
 
     @classmethod
     def from_dict(cls, doc: dict[str, Any] | None) -> "GrantDoc | None":
         if not doc:
             return None
+        raw_level = doc.get("level")
         return cls(
             subject_type=str(doc.get("subject_type", "")),
             subject=str(doc.get("subject", "")),
             collection=str(doc.get("collection", "")),
             read=bool(doc.get("read", False)),
             write=bool(doc.get("write", False)),
+            level=int(raw_level) if raw_level is not None else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -160,6 +193,7 @@ class GrantDoc:
             "subject_type": self.subject_type,
             "subject": self.subject,
             "collection": self.collection,
+            "level": int(self.level or 0),
             "read": self.read,
             "write": self.write,
         }

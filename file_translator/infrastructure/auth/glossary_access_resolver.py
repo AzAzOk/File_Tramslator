@@ -25,6 +25,10 @@ from typing import Any
 
 from file_translator.domain.auth import User
 from file_translator.infrastructure.auth.role_config import (
+    ACCESS_LEVEL_ADD,
+    ACCESS_LEVEL_MODIFY,
+    ACCESS_LEVEL_NONE,
+    ACCESS_LEVEL_VIEW,
     DEFAULT_COLLECTION,
     DEFAULT_CACHE_TTL_SECONDS,
     GrantDoc,
@@ -134,27 +138,170 @@ class GlossaryAccessResolver:
 
     # --- resolution -------------------------------------------------------
 
+    #: Which level a check demands. ``write`` is kept as the old name for
+    #: ``modify`` so existing call sites keep working until they are split.
+    LEVEL_REQUIRED: dict[str, int] = {
+        "read": ACCESS_LEVEL_VIEW,
+        "create": ACCESS_LEVEL_ADD,
+        "write": ACCESS_LEVEL_MODIFY,
+        "modify": ACCESS_LEVEL_MODIFY,
+    }
+
+    async def resolve_levels(
+        self, user: User, *, include_personal: bool = True
+    ) -> dict[str, int] | None:
+        """Per-collection access level for a user; ``None`` means unrestricted.
+
+        The rule, in order:
+
+        - the built-in ``admin`` role bypasses everything;
+        - the levels of the role and of the AD groups combine to their maximum;
+        - a personal grant for this user replaces that inherited value outright,
+          so it may raise *or* lower it (design D5) — unless ``include_personal``
+          is False, which answers "what would this person have from the role
+          and their groups alone?";
+        - ``default`` is floored at level 1, because its readability is not
+          revocable (spec: `glossary-access`).
+        """
+        if self._is_admin(user):
+            return None
+
+        if not await self._grants_configured():
+            # Grants not seeded yet — preserve the legacy env-map behaviour.
+            return self._levels_from_legacy(self._resolve_legacy(user))
+
+        grants = await self._grants_for_user(user)
+        levels: dict[str, int] = {}
+        personal: dict[str, int] = {}
+        for g in grants:
+            grant_level = int(g.level or 0)
+            if g.subject_type == SUBJECT_USER:
+                personal[g.collection] = grant_level
+                continue
+            levels[g.collection] = max(levels.get(g.collection, ACCESS_LEVEL_NONE), grant_level)
+
+        if include_personal:
+            # Existence is the switch: a personal document holding level 0 is a
+            # real denial, not an unspecified value to fall back from.
+            for collection, grant_level in personal.items():
+                levels[collection] = grant_level
+
+        return self._floor_default(levels)
+
+    async def resolve_levels_with_sources(
+        self, user: User, *, include_personal: bool = True
+    ) -> dict[str, tuple[int, str]] | None:
+        """Per-collection ``(level, source)`` for a user; ``None`` = unrestricted.
+
+        The level is exactly what :meth:`resolve_levels` computes — the admin
+        dialog must never explain a number the enforcement would disagree
+        with. The source only attributes it:
+
+        - ``personal``     — a grant for this user id (overrides everything);
+        - ``role:<name>``  — the strongest role grant;
+        - ``group:<name>`` — the strongest AD-group grant;
+        - ``default``      — the unrevocable floor on ``default``, not a grant;
+        - ``none``         — no matching document, level 0.
+
+        Ties inside one subject kind (two roles granting the same level) name
+        the first document found; either name is truthful, and the level is
+        the same either way.
+        """
+        if self._is_admin(user):
+            return None
+
+        if not await self._grants_configured():
+            levels = self._levels_from_legacy(self._resolve_legacy(user))
+            sources: dict[str, str] = {}
+            for collection in levels:
+                sources[collection] = (
+                    "default" if collection == DEFAULT_COLLECTION else "none"
+                )
+            # The legacy map is keyed by AD group, so that is the only source
+            # it can name; `default` keeps its floor label unless a group
+            # actually granted it.
+            for group_name in user.ldap_groups or []:
+                for collection in self._collection_map.get(group_name, []):
+                    if collection in levels:
+                        sources[collection] = f"group:{group_name}"
+            return {c: (lvl, sources[c]) for c, lvl in levels.items()}
+
+        role_levels: dict[str, int] = {}
+        role_sources: dict[str, str] = {}
+        group_levels: dict[str, int] = {}
+        group_sources: dict[str, str] = {}
+        personal: dict[str, tuple[int, str]] = {}
+        for grant in await self._grants_for_user(user):
+            grant_level = int(grant.level or 0)
+            if grant.subject_type == SUBJECT_USER:
+                personal[grant.collection] = (grant_level, "personal")
+            elif grant.subject_type == SUBJECT_GROUP:
+                if grant_level > group_levels.get(grant.collection, ACCESS_LEVEL_NONE - 1):
+                    group_levels[grant.collection] = grant_level
+                    group_sources[grant.collection] = f"group:{grant.subject}"
+            else:
+                if grant_level > role_levels.get(grant.collection, ACCESS_LEVEL_NONE - 1):
+                    role_levels[grant.collection] = grant_level
+                    role_sources[grant.collection] = f"role:{grant.subject}"
+
+        levels: dict[str, int] = {}
+        sources = {}
+        for collection in set(role_levels) | set(group_levels):
+            role_level = role_levels.get(collection, ACCESS_LEVEL_NONE)
+            group_level = group_levels.get(collection, ACCESS_LEVEL_NONE)
+            # A group-only document — including one stored at level 0 by
+            # toggling a grant off — has no role label to fall back to, so
+            # only take the role branch when the role actually granted it.
+            if collection in role_sources and role_level >= group_level:
+                levels[collection] = role_level
+                sources[collection] = role_sources[collection]
+            else:
+                levels[collection] = group_level
+                sources[collection] = group_sources[collection]
+
+        if include_personal:
+            for collection, (grant_level, _) in personal.items():
+                levels[collection] = grant_level
+                sources[collection] = "personal"
+
+        self._floor_default(levels)
+        for collection in levels:
+            # The floor is not a document, so a `default` nobody granted says
+            # `default` rather than pretending somebody granted it.
+            sources.setdefault(
+                collection,
+                "default" if collection == DEFAULT_COLLECTION else "none",
+            )
+        return {c: (lvl, sources[c]) for c, lvl in levels.items()}
+
+    @classmethod
+    def _levels_from_legacy(cls, sets: AccessSets) -> dict[str, int]:
+        levels: dict[str, int] = {
+            collection: ACCESS_LEVEL_VIEW for collection in sets.read or set()
+        }
+        for collection in sets.write or set():
+            levels[collection] = ACCESS_LEVEL_MODIFY
+        return cls._floor_default(levels)
+
+    @staticmethod
+    def _floor_default(levels: dict[str, int]) -> dict[str, int]:
+        levels[DEFAULT_COLLECTION] = max(
+            levels.get(DEFAULT_COLLECTION, ACCESS_LEVEL_NONE), ACCESS_LEVEL_VIEW
+        )
+        return levels
+
     async def resolve_access(self, user: User) -> AccessSets:
         """Return the user's (read, write) collection sets.
 
         ``None`` means unrestricted (built-in admin role bypass).
         """
-        if self._is_admin(user):
+        levels = await self.resolve_levels(user)
+        if levels is None:
             return AccessSets(read=None, write=None)
-
-        if not await self._grants_configured():
-            # Grants not seeded yet — preserve the legacy env-map behaviour.
-            return self._resolve_legacy(user)
-
-        grants = await self._grants_for_user(user)
-        read: set[str] = {DEFAULT_COLLECTION}
-        write: set[str] = set()
-        for g in grants:
-            if g.read:
-                read.add(g.collection)
-            if g.write:
-                write.add(g.collection)
-        return AccessSets(read=read, write=write)
+        return AccessSets(
+            read={c for c, lvl in levels.items() if lvl >= ACCESS_LEVEL_VIEW},
+            write={c for c, lvl in levels.items() if lvl >= ACCESS_LEVEL_MODIFY},
+        )
 
     def _resolve_legacy(self, user: User) -> AccessSets:
         """Env-map fallback used only while the grants collection is empty."""
@@ -167,19 +314,24 @@ class GlossaryAccessResolver:
         return AccessSets(read=read, write=write)
 
     async def can_access(self, user: User, collection_id: str, level: str = "read") -> bool:
-        """Check read/write access to one collection for a user."""
-        sets = await self.resolve_access(user)
-        read, write = sets.read, sets.write
-        if read is None or write is None:
+        """Check one collection for a user at ``read``/``create``/``modify``."""
+        levels = await self.resolve_levels(user)
+        if levels is None:
             return True
-        target = read if level == "read" else write
-        return collection_id in target
+        required = self.LEVEL_REQUIRED.get(level, ACCESS_LEVEL_VIEW)
+        return levels.get(collection_id, ACCESS_LEVEL_NONE) >= required
 
     async def can_read(self, user: User, collection_id: str) -> bool:
         return await self.can_access(user, collection_id, "read")
 
+    async def can_create(self, user: User, collection_id: str) -> bool:
+        return await self.can_access(user, collection_id, "create")
+
     async def can_write(self, user: User, collection_id: str) -> bool:
         return await self.can_access(user, collection_id, "write")
+
+    async def can_modify(self, user: User, collection_id: str) -> bool:
+        return await self.can_access(user, collection_id, "modify")
 
     # --- legacy synchronous API (kept for tests / pre-seed callers) -------
 

@@ -209,20 +209,25 @@ class AuthService:
         """Resolve a user's effective permissions from the runtime role registry.
 
         Combines the role's permission pool (Mongo → cached → Python fallback)
-        with the user's individual permission overrides. The built-in admin
-        role is always granted every permission.
+        with the user's individual permission overrides, applying the personal
+        denials before the raises — the same formula as ``User.effective_permissions``.
+        The built-in admin role is always granted every permission.
         """
         role_name = getattr(user, "role_name", "") or (user.role.value if user.role else "")
         if role_name == RoleType.ADMIN.value:
-            return set(Permission)
-        role_permission_values = await self.role_store.resolve_permissions(role_name)
-        effective: set[Permission] = set()
-        for value in role_permission_values:
-            try:
-                effective.add(Permission(value))
-            except ValueError:
-                logger.debug(f"Ignoring unknown permission value '{value}' for role '{role_name}'")
-        return effective | set(getattr(user, "permissions", set()))
+            # The admin pool is every right; denials still apply so that the
+            # UI and the runtime agree on what an admin was denied.
+            base = set(Permission)
+        else:
+            role_permission_values = await self.role_store.resolve_permissions(role_name)
+            base = set()
+            for value in role_permission_values:
+                try:
+                    base.add(Permission(value))
+                except ValueError:
+                    logger.debug(f"Ignoring unknown permission value '{value}' for role '{role_name}'")
+        denied = set(getattr(user, "denied", set()))
+        return (base - denied) | set(getattr(user, "permissions", set()))
 
     async def check_permission(self, credentials: AuthCredentials,
                                  permission: Permission) -> bool:

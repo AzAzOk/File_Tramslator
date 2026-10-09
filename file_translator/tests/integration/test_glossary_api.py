@@ -41,9 +41,20 @@ class FakeAccessResolver:
     async def can_write(self, user: Any, collection_id: str) -> bool:
         return True if self.writable is None else collection_id in self.writable
 
+    async def can_create(self, user: Any, collection_id: str) -> bool:
+        # The fake models access as a single read/write switch; the level
+        # thresholds themselves are verified against the real resolver in
+        # test_collection_access_api.py.
+        return await self.can_write(user, collection_id)
+
+    async def can_modify(self, user: Any, collection_id: str) -> bool:
+        return await self.can_write(user, collection_id)
+
     async def can_access(self, user: Any, collection_id: str, level: str = "read") -> bool:
-        if level == "write":
-            return await self.can_write(user, collection_id)
+        if level == "create":
+            return await self.can_create(user, collection_id)
+        if level in ("write", "modify"):
+            return await self.can_modify(user, collection_id)
         return await self.can_read(user, collection_id)
 
     # Legacy synchronous API (kept for direct-resolver tests).

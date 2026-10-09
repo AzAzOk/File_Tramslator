@@ -184,11 +184,24 @@ class GlossaryService:
         return accessible
 
     async def can_read_collection(self, user: Any, collection_id: str) -> bool:
-        """True when the user may read the given collection."""
+        """True when the user may read the given collection (level ≥ 1)."""
         return await self._access_resolver.can_read(user, collection_id)
 
+    async def can_create_collection(self, user: Any, collection_id: str) -> bool:
+        """True when the user may add entries to the collection (level ≥ 2)."""
+        return await self._access_resolver.can_create(user, collection_id)
+
+    async def can_modify_collection(self, user: Any, collection_id: str) -> bool:
+        """True when the user may update, delete or import into it (level ≥ 3)."""
+        return await self._access_resolver.can_modify(user, collection_id)
+
     async def can_write_collection(self, user: Any, collection_id: str) -> bool:
-        """True when the user may write the given collection."""
+        """True when the user may write the given collection.
+
+        Kept as the combined legacy check (level ≥ 3). New call sites should
+        pick :meth:`can_create_collection` or :meth:`can_modify_collection` so
+        the threshold they actually need is the one they get.
+        """
         return await self._access_resolver.can_write(user, collection_id)
 
     async def require_collection_access(self, user: Any, collection_id: str, level: str = "read") -> bool:

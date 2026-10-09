@@ -1442,11 +1442,9 @@ async function restoreActiveJobs() {
     const resp = await authFetch('/jobs');
     if (!resp.ok) return;
     const jobs = await resp.json();
-    const myUserId = currentUser?.user_id;
     const toPoll = [];
     for (const job of jobs) {
       if (!job.job_id) continue;
-      if (myUserId && job.user_id && job.user_id !== myUserId) continue;
       if (['failed', 'cancelled'].includes(job.status)) continue;
       const isCompleted = job.status === 'completed';
       activeJobs[job.job_id] = {

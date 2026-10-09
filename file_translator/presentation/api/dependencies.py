@@ -46,8 +46,8 @@ def require_permission(permission: Permission) -> Any:
     """Dependency factory that requires a specific permission.
     
     Usage:
-        @app.get("/glossary")
-        async def list_glossary(user: AuthCredentials = Depends(require_permission(Permission.VIEW_GLOSSARY))):
+        @app.post("/jobs")
+        async def create_job(user: AuthCredentials = Depends(require_permission(Permission.TRANSLATE))):
             ...
     """
     async def _check_permission(
