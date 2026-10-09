@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from admin_service.app import create_app  # noqa: E402
 from admin_service.config import AdminConfig  # noqa: E402
 from admin_service.deps import AdminContainer, AdminPasswordStore, SessionTokens  # noqa: E402
-from file_translator.domain.auth import RoleType, User  # noqa: E402
+from file_translator.domain.auth import Permission, RoleType, User  # noqa: E402
 from file_translator.infrastructure.auth.role_config import (  # noqa: E402
     DEFAULT_ROLES,
     GrantDoc,
@@ -122,21 +122,31 @@ class FakeGrantRepository:
 
 
 class FakeUserRepository:
+    """Stands in for the Mongo ``users`` collection.
+
+    Reads and writes hand out copies, like a database does. A live-object fake
+    would hide exactly the failure this suite has to catch: a mutation made in
+    memory is visible to the next read even when the write never happened.
+    """
+
     def __init__(self, users: list[User] | None = None) -> None:
         self.users: dict[str, User] = {u.user_id: u for u in (users or [])}
 
     async def get_by_id(self, user_id: str) -> User | None:
-        return self.users.get(user_id)
+        stored = self.users.get(user_id)
+        return replace(stored) if stored else None
 
     async def get_by_username(self, username: str) -> User | None:
         return next((u for u in self.users.values() if u.username == username), None)
 
     async def create(self, user: User) -> User:
-        self.users[user.user_id] = user
+        self.users[user.user_id] = replace(user)
         return user
 
     async def update(self, user: User) -> User | None:
-        self.users[user.user_id] = user
+        if user.user_id not in self.users:
+            return None
+        self.users[user.user_id] = replace(user)
         return user
 
     async def delete(self, user_id: str) -> bool:
@@ -427,6 +437,30 @@ def test_list_users_exposes_roles_and_manual_flag(auth_client: TestClient):
     assert users["u-1"]["role_permissions"]  # role pool is resolved
 
 
+def test_list_users_reports_effective_state_and_denials(
+    auth_client: TestClient, user_repository
+):
+    """The dialog renders `effective`; it must be the role pool minus denials."""
+    user_repository.users["u-1"].denied = {Permission.SEND_FEEDBACK}
+    user_repository.users["u-1"].permissions = {Permission.MANAGE_SYSTEM}
+
+    users = {u["user_id"]: u for u in auth_client.get("/api/users").json()}
+    lowered = users["u-1"]
+    plain = users["u-2"]
+
+    assert lowered["denied"] == [Permission.SEND_FEEDBACK.value]
+    assert Permission.SEND_FEEDBACK.value not in lowered["effective"]
+    assert Permission.MANAGE_SYSTEM.value in lowered["effective"]
+    # The formula the client shows, recomputed from what the endpoint reports.
+    assert set(lowered["effective"]) == (
+        set(lowered["role_permissions"]) - set(lowered["denied"])
+    ) | set(lowered["permissions"])
+
+    # A user with no deviations reports exactly their role's pool.
+    assert plain["denied"] == []
+    assert set(plain["effective"]) == set(plain["role_permissions"])
+
+
 def test_assign_role_sets_manual_flag(auth_client):
     response = auth_client.post("/api/users/u-1/role", json={"role": "admin"})
     assert response.status_code == 200
@@ -455,18 +489,326 @@ def test_assign_role_for_missing_user_is_404(auth_client: TestClient):
     assert auth_client.post("/api/users/nope/role", json={"role": "user"}).status_code == 404
 
 
+def role_pool(name: str = "user") -> list[str]:
+    """Permission values of a built-in role, as the endpoint resolves them."""
+    return sorted(DEFAULT_ROLES[name]["permissions"])
+
+
 def test_set_permission_overrides(auth_client: TestClient, user_repository):
     response = auth_client.post(
-        "/api/users/u-1/permissions", json={"permissions": ["users:manage"]}
+        "/api/users/u-1/permissions", json={"permissions": ["system:manage"]}
     )
     assert response.status_code == 200
-    assert response.json()["permissions"] == ["users:manage"]
+    assert response.json()["user"]["permissions"] == ["system:manage"]
     assert user_repository.users["u-1"].permissions
 
 
-def test_set_unknown_permission_is_rejected(auth_client: TestClient):
+def test_saving_the_role_pool_writes_no_personal_sets(
+    auth_client: TestClient, user_repository
+):
+    """The dialog resubmits what it displayed — that must be a no-op on disk."""
+    response = auth_client.post(
+        "/api/users/u-1/permissions", json={"permissions": role_pool()}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["raised"] == 0
+    assert body["lowered"] == 0
+
+    stored = user_repository.users["u-1"]
+    assert stored.permissions == set()
+    assert stored.denied == set()
+
+
+def test_raising_one_right_stores_only_that_right(
+    auth_client: TestClient, user_repository
+):
+    response = auth_client.post(
+        "/api/users/u-1/permissions",
+        json={"permissions": role_pool() + ["system:manage"]},
+    )
+    body = response.json()
+    assert body["raised"] == 1
+    assert body["lowered"] == 0
+    assert body["user"]["effective"] == sorted(set(role_pool()) | {"system:manage"})
+
+    stored = user_repository.users["u-1"]
+    assert stored.permissions == {Permission.MANAGE_SYSTEM}
+    assert stored.denied == set()
+
+
+def test_lowering_one_right_stores_only_that_denial(
+    auth_client: TestClient, user_repository
+):
+    desired = [p for p in role_pool() if p != Permission.SEND_FEEDBACK.value]
+    response = auth_client.post(
+        "/api/users/u-1/permissions", json={"permissions": desired}
+    )
+    body = response.json()
+    assert body["raised"] == 0
+    assert body["lowered"] == 1
+    assert Permission.SEND_FEEDBACK.value not in body["user"]["effective"]
+
+    stored = user_repository.users["u-1"]
+    assert stored.denied == {Permission.SEND_FEEDBACK}
+    assert stored.permissions == set()
+    # Other members of the same role are untouched.
+    assert user_repository.users["u-2"].denied == set()
+
+
+def test_set_unknown_permission_is_rejected(auth_client: TestClient, event_repository):
     response = auth_client.post("/api/users/u-1/permissions", json={"permissions": ["nope:all"]})
     assert response.status_code == 400
+    assert "user.permissions_set" not in event_repository.actions()
+
+
+def test_permissions_audit_names_both_counts(auth_client: TestClient, event_repository):
+    desired = [p for p in role_pool() if p != Permission.SEND_FEEDBACK.value] + ["system:manage"]
+    auth_client.post("/api/users/u-1/permissions", json={"permissions": desired})
+
+    audit = [e for e in event_repository.events if e["action"] == "user.permissions_set"]
+    assert len(audit) == 1  # one record for a save, not one per changed right
+    details = audit[0]["details"]
+    assert details["raised_count"] == 1
+    assert details["lowered_count"] == 1
+    assert details["raised"] == ["system:manage"]
+    assert details["lowered"] == [Permission.SEND_FEEDBACK.value]
+
+
+def test_reset_rights_clears_every_deviation(auth_client: TestClient, user_repository):
+    auth_client.post(
+        "/api/users/u-1/permissions",
+        json={"permissions": role_pool() + ["system:manage"]},
+    )
+    auth_client.post(
+        "/api/users/u-1/permissions",
+        json={"permissions": [p for p in role_pool() if p != Permission.SEND_FEEDBACK.value]
+              + ["system:manage"]},
+    )
+    stored = user_repository.users["u-1"]
+    assert stored.permissions and stored.denied
+
+    response = auth_client.post("/api/users/u-1/reset-rights")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["user"]["permissions"] == []
+    assert body["user"]["denied"] == []
+    assert set(body["user"]["effective"]) == set(body["user"]["role_permissions"])
+
+    stored = user_repository.users["u-1"]
+    assert stored.permissions == set()
+    assert stored.denied == set()
+
+
+# --- Role matching on save (change user-rights-collection-levels, task 3.x) ---
+
+
+def test_full_match_save_offers_the_matching_role(auth_client: TestClient):
+    """Rights lowered to exactly another role's pool → the offer names it."""
+    response = auth_client.post(
+        "/api/users/u-1/permissions", json={"permissions": role_pool("viewer")}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["raised"] == 0
+    assert body["lowered"] == 1  # translate (the only right `user` has over `viewer`)
+    assert body["suggestions"] == ["viewer"]
+
+
+def test_save_without_deviations_never_offers_a_role(auth_client: TestClient):
+    """`user` and `operator` share a pool — an identical pool alone is not an offer."""
+    body = auth_client.post(
+        "/api/users/u-1/permissions", json={"permissions": role_pool()}
+    ).json()
+    assert body["raised"] == 0
+    assert body["lowered"] == 0
+    assert body["suggestions"] == []
+
+
+def test_permissions_match_without_levels_is_not_offered(
+    auth_client: TestClient, grant_repository
+):
+    """The role's pool matches, but accepting would move this person's level."""
+    auth_client.put(
+        "/api/access/grant",
+        json={
+            "subject_type": "user",
+            "subject": "u-1",
+            "collection": "oup",
+            "read": True,
+            "write": True,
+        },
+    )
+    body = auth_client.post(
+        "/api/users/u-1/permissions", json={"permissions": role_pool("viewer")}
+    ).json()
+    assert body["lowered"] > 0  # rights do match the viewer pool
+    assert body["suggestions"] == []  # ...but the personal level would drop
+
+
+# --- Per-collection access view (change user-rights-collection-levels, task 8.1) ---
+
+
+def _grant(auth_client: TestClient, **grant) -> None:
+    response = auth_client.put("/api/access/grant", json=grant)
+    assert response.status_code == 200, response.text
+
+
+def test_access_view_names_role_group_personal_and_default(auth_client: TestClient):
+    """Every collection lists its level and the document kind that grants it."""
+    _grant(auth_client, subject_type="role", subject="user", collection="oup", level=2)
+    _grant(auth_client, subject_type="user", subject="u-1", collection="dtd", level=1)
+
+    body = auth_client.get("/api/users/u-1/access").json()
+    assert body["user_id"] == "u-1"
+    assert body["unrestricted"] is False
+    assert [c["collection"] for c in body["collections"]] == ["default", "dtd", "oup"]
+
+    by_name = {c["collection"]: c for c in body["collections"]}
+    assert by_name["oup"] == {"collection": "oup", "level": 2, "source": "role:user"}
+    # The personal grant wins over the seeded group:DTD@dtd=3 and owns the label.
+    assert by_name["dtd"] == {"collection": "dtd", "level": 1, "source": "personal"}
+    # Nobody grants `default` to role `user` — it is the floor, with no grantor.
+    assert by_name["default"] == {"collection": "default", "level": 1, "source": "default"}
+
+
+def test_access_view_labels_a_group_grant(auth_client: TestClient):
+    _grant(auth_client, subject_type="group", subject="HR", collection="oup", level=3)
+
+    body = auth_client.get("/api/users/u-2/access").json()
+    by_name = {c["collection"]: c for c in body["collections"]}
+    assert by_name["oup"] == {"collection": "oup", "level": 3, "source": "group:HR"}
+    assert by_name["dtd"]["source"] == "none"  # HR is not in the DTD group
+
+
+def test_access_view_reports_unrestricted_admin(auth_client: TestClient):
+    """A plain `unrestricted: true` — an empty list would read as no access."""
+    assert auth_client.post("/api/users/u-3/role", json={"role": "admin"}).status_code == 200
+
+    body = auth_client.get("/api/users/u-3/access").json()
+    assert body == {"user_id": "u-3", "unrestricted": True, "collections": []}
+
+
+def test_access_view_404s_for_unknown_user(auth_client: TestClient):
+    assert auth_client.get("/api/users/ghost/access").status_code == 404
+
+
+def test_saved_personal_level_reloads_as_personal_and_leaves_role_peers(
+    auth_client: TestClient,
+):
+    """A saved level is labelled `personal` on reload and touches one user."""
+    _grant(auth_client, subject_type="role", subject="user", collection="oup", level=2)
+    _grant(auth_client, subject_type="user", subject="u-1", collection="oup", level=3)
+
+    saved = auth_client.get("/api/users/u-1/access").json()
+    oup = next(c for c in saved["collections"] if c["collection"] == "oup")
+    assert oup == {"collection": "oup", "level": 3, "source": "personal"}
+
+    # u-2 shares the role: the personal grant of u-1 must not have moved them.
+    peer = auth_client.get("/api/users/u-2/access").json()
+    peer_oup = next(c for c in peer["collections"] if c["collection"] == "oup")
+    assert peer_oup == {"collection": "oup", "level": 2, "source": "role:user"}
+
+
+def test_accepting_the_offer_keeps_access_unchanged(
+    auth_client: TestClient, user_repository
+):
+    offer = auth_client.post(
+        "/api/users/u-1/permissions", json={"permissions": role_pool("viewer")}
+    ).json()
+    assert offer["suggestions"] == ["viewer"]
+    before = set(offer["user"]["effective"])
+
+    response = auth_client.post(
+        "/api/users/u-1/role", json={"role": "viewer", "clear_deviations": True}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["role"] == "viewer"
+    assert set(body["effective"]) == before  # the promise: access does not move
+    assert body["permissions"] == []
+    assert body["denied"] == []
+
+    stored = user_repository.users["u-1"]
+    assert stored.permissions == set()
+    assert stored.denied == set()
+    assert stored.manual_role is True
+
+
+def test_accepting_the_offer_removes_personal_levels(
+    auth_client: TestClient, grant_repository, event_repository
+):
+    """Half of "nothing changes" is the personal collection levels."""
+    auth_client.put(
+        "/api/access/grant",
+        json={
+            "subject_type": "user",
+            "subject": "u-1",
+            "collection": "oup",
+            "read": True,
+            "write": False,
+        },
+    )
+    auth_client.post(
+        "/api/users/u-1/permissions", json={"permissions": role_pool("viewer")}
+    )
+    response = auth_client.post(
+        "/api/users/u-1/role", json={"role": "viewer", "clear_deviations": True}
+    )
+    assert response.status_code == 200
+    assert ("user", "u-1", "oup") not in grant_repository.grants
+
+    assigned = [e for e in event_repository.events if e["action"] == "user.role_assigned"]
+    assert assigned[-1]["details"]["clear_deviations"] is True
+    assert assigned[-1]["details"]["cleared_grants"] == 1
+    assert assigned[-1]["details"]["cleared_lowered"] == 1
+
+
+def test_role_change_without_the_offer_keeps_deviations(
+    auth_client: TestClient, user_repository
+):
+    """A plain role assignment is not the offer — it leaves deviations alone."""
+    auth_client.post(
+        "/api/users/u-1/permissions",
+        json={"permissions": role_pool() + ["system:manage"]},
+    )
+    response = auth_client.post("/api/users/u-1/role", json={"role": "viewer"})
+    assert response.status_code == 200
+
+    stored = user_repository.users["u-1"]
+    assert stored.role_name == "viewer"
+    assert stored.permissions == {Permission.MANAGE_SYSTEM}
+
+
+def test_reset_to_ad_role_keeps_deviations(auth_client: TestClient, user_repository):
+    """Handing the role back to AD is not «Вернуть к роли» — deviations stay."""
+    auth_client.post(
+        "/api/users/u-2/permissions",
+        json={"permissions": role_pool() + ["system:manage"]},
+    )
+    response = auth_client.post("/api/users/u-2/reset-role")
+    assert response.status_code == 200
+    assert response.json()["role"] == "user"
+
+    stored = user_repository.users["u-2"]
+    assert stored.role_name == "user"
+    assert stored.manual_role is False
+    assert stored.permissions == {Permission.MANAGE_SYSTEM}
+
+
+def test_multiple_matching_roles_are_reported_together(
+    auth_client: TestClient, role_repository
+):
+    """Two roles with the same pool are both named; no silent pick."""
+    created = auth_client.post(
+        "/api/roles", json={"name": "reviewer", "permissions": role_pool("viewer")}
+    )
+    assert created.status_code == 201, created.text
+
+    body = auth_client.post(
+        "/api/users/u-1/permissions", json={"permissions": role_pool("viewer")}
+    ).json()
+    assert body["suggestions"] == ["reviewer", "viewer"]
 
 
 def test_activate_and_deactivate(auth_client: TestClient, user_repository):
@@ -493,9 +835,72 @@ def test_reset_role_without_admin_group_maps_to_user(auth_client: TestClient, mo
     assert response.json()["role"] == "user"
 
 
+def test_role_assignment_answers_with_the_stored_role(auth_client: TestClient, user_repository):
+    """The answer is the state that was stored, not the object handed to update()."""
+    response = auth_client.post("/api/users/u-1/role", json={"role": "admin"})
+    assert response.status_code == 200
+    assert response.json()["role"] == user_repository.users["u-1"].role_name
+
+
+def test_role_assignment_that_did_not_persist_is_not_reported_as_success(
+    auth_client: TestClient, user_repository, monkeypatch
+):
+    async def swallow(user):  # the write goes nowhere
+        return None
+
+    monkeypatch.setattr(user_repository, "update", swallow)
+    response = auth_client.post("/api/users/u-1/role", json={"role": "admin"})
+
+    assert response.status_code == 409
+    assert user_repository.users["u-1"].role_name == "user"
+    assert user_repository.users["u-1"].manual_role is False
+
+
+def test_role_reset_that_did_not_persist_is_not_reported_as_success(
+    auth_client: TestClient, user_repository, monkeypatch
+):
+    monkeypatch.setenv("LDAP_GROUP_ADMIN", "ADMINS")
+    user_repository.users["u-2"].ldap_groups = ["ADMINS"]
+    user_repository.users["u-2"].manual_role = True
+
+    async def swallow(user):
+        return None
+
+    monkeypatch.setattr(user_repository, "update", swallow)
+    response = auth_client.post("/api/users/u-2/reset-role")
+
+    assert response.status_code == 409
+    assert user_repository.users["u-2"].manual_role is True
+
+
+def test_payload_reports_the_role_ad_would_assign(
+    auth_client: TestClient, user_repository, monkeypatch
+):
+    """The reset confirmation names the consequence, so it needs it up front."""
+    monkeypatch.setenv("LDAP_GROUP_ADMIN", "ADMINS")
+    user_repository.users["u-2"].ldap_groups = ["ADMINS"]
+
+    listed = {u["user_id"]: u for u in auth_client.get("/api/users").json()}
+    assert listed["u-2"]["ldap_role"] == "admin"   # in the AD admin group
+    assert listed["u-1"]["ldap_role"] == "user"    # not in it
+
+
 # --------------------------------------------------------------------------
 # 5.4 — role management
 # --------------------------------------------------------------------------
+def test_permission_labels_cover_the_whole_pool(auth_client: TestClient):
+    """Every right the pool offers can be shown as words, not as a raw value."""
+    pool = set(auth_client.get("/api/roles/permissions-pool").json())
+    labels = auth_client.get("/api/roles/permission-labels").json()
+
+    assert pool <= set(labels)
+    assert all(labels[value] and labels[value] != value for value in pool)
+
+
+def test_permission_labels_require_a_session(client: TestClient):
+    assert client.get("/api/roles/permission-labels").status_code == 401
+
+
 def test_list_roles_hides_api_role(auth_client: TestClient):
     names = [r["name"] for r in auth_client.get("/api/roles").json()]
     assert "admin" in names and "user" in names
@@ -514,13 +919,13 @@ def test_create_custom_role(auth_client: TestClient, role_repository):
         json={
             "name": "Translator",
             "description": "Переводчик",
-            "permissions": ["translate", "glossary:view"],
+            "permissions": ["feedback:send", "translate"],
             "grants": ["dtd"],
         },
     )
     assert response.status_code == 201
     assert response.json()["builtin"] is False
-    assert response.json()["permissions"] == ["glossary:view", "translate"]
+    assert response.json()["permissions"] == ["feedback:send", "translate"]
     assert "Translator" in role_repository.roles
 
 
@@ -536,11 +941,48 @@ def test_create_role_with_unknown_permission_rejected(auth_client: TestClient):
 def test_update_custom_role(auth_client: TestClient, role_repository):
     auth_client.post("/api/roles", json={"name": "Translator", "permissions": ["translate"]})
     response = auth_client.patch(
-        "/api/roles/Translator", json={"permissions": ["translate", "glossary:view"]}
+        "/api/roles/Translator", json={"permissions": ["translate", "feedback:send"]}
     )
     assert response.status_code == 200
-    assert response.json()["permissions"] == ["glossary:view", "translate"]
-    assert role_repository.roles["Translator"].permissions == ["glossary:view", "translate"]
+    assert response.json()["permissions"] == ["feedback:send", "translate"]
+    assert role_repository.roles["Translator"].permissions == ["feedback:send", "translate"]
+
+
+def test_update_role_drops_stale_stored_permissions(
+    auth_client: TestClient, role_repository
+):
+    """A role written by an older build carries keys that no longer exist.
+
+    Saving it (here: just a description edit, no permission payload) must drop
+    the stale keys from storage rather than 400 or keep them forever.
+    """
+    role_repository.roles["Legacy"] = RoleDoc(
+        name="Legacy",
+        description="old",
+        builtin=False,
+        protected=False,
+        permissions=["translate", "jobs:view", "users:manage"],
+        grants=[],
+    )
+    response = auth_client.patch("/api/roles/Legacy", json={"description": "renamed"})
+    assert response.status_code == 200, response.text
+    assert response.json()["permissions"] == ["translate"]
+    assert role_repository.roles["Legacy"].permissions == ["translate"]
+
+
+def test_removed_rights_are_rejected_on_every_save_path(auth_client: TestClient):
+    """An explicit removed right is "cannot be granted" — a 400, not silent drop."""
+    user_save = auth_client.post(
+        "/api/users/u-1/permissions", json={"permissions": ["journal:view"]}
+    )
+    assert user_save.status_code == 400
+    assert "Unknown permissions" in user_save.json()["detail"]
+
+    role_save = auth_client.post(
+        "/api/roles", json={"name": "Bad", "permissions": ["journal:view"]}
+    )
+    assert role_save.status_code == 400
+    assert "Unknown permissions" in role_save.json()["detail"]
 
 
 def test_builtin_admin_role_cannot_be_modified(auth_client: TestClient):
@@ -615,9 +1057,56 @@ def test_matrix_includes_default_and_all_collection_sources(auth_client: TestCli
 def test_matrix_reflects_existing_grants(auth_client: TestClient):
     body = auth_client.get("/api/access/matrix").json()
     admin_row = next(r for r in body["rows"] if r["subject"] == "admin" and r["subject_type"] == "role")
-    assert admin_row["cells"]["default"] == {"read": True, "write": True}
+    assert admin_row["cells"]["default"] == {"read": True, "write": True, "level": 3}
     dtd_row = next(r for r in body["rows"] if r["subject"] == "DTD")
-    assert dtd_row["cells"]["dtd"] == {"read": True, "write": True}
+    assert dtd_row["cells"]["dtd"] == {"read": True, "write": True, "level": 3}
+
+
+def test_matrix_marks_admin_rows_unrestricted(auth_client: TestClient):
+    """The built-in admin role, and users holding it, bypass collection checks."""
+    body = auth_client.get("/api/access/matrix").json()
+    admin_row = next(
+        r for r in body["rows"] if r["subject_type"] == "role" and r["subject"] == "admin"
+    )
+    assert admin_row["unrestricted"] is True
+
+    assert auth_client.post("/api/users/u-1/role", json={"role": "admin"}).status_code == 200
+    body = auth_client.get("/api/access/matrix").json()
+    promoted = next(
+        r for r in body["rows"] if r["subject_type"] == "user" and r["subject"] == "u-1"
+    )
+    assert promoted["unrestricted"] is True
+
+    other_user = next(
+        r for r in body["rows"] if r["subject_type"] == "user" and r["subject"] == "u-2"
+    )
+    group = next(r for r in body["rows"] if r["subject_type"] == "group" and r["subject"] == "DTD")
+    assert other_user["unrestricted"] is False
+    assert group["unrestricted"] is False
+
+
+def test_matrix_reads_and_writes_levels(
+    auth_client: TestClient, grant_repository, event_repository
+):
+    """Level in, level out — with the legacy flags still on every cell."""
+    response = auth_client.put(
+        "/api/access/grant",
+        json={"subject_type": "user", "subject": "u-1", "collection": "oup", "level": 2},
+    )
+    assert response.status_code == 200
+    stored = grant_repository.grants[("user", "u-1", "oup")]
+    assert stored.level == 2
+    assert (stored.read, stored.write) == (True, False)  # add, but not modify
+
+    row = next(
+        r
+        for r in auth_client.get("/api/access/matrix").json()["rows"]
+        if r["subject_type"] == "user" and r["subject"] == "u-1"
+    )
+    assert row["cells"]["oup"] == {"read": True, "write": False, "level": 2}
+
+    audit = [e for e in event_repository.events if e["action"] == "access.grant_upserted"]
+    assert audit[-1]["details"]["level"] == 2
 
 
 def test_matrix_survives_mysql_outage(auth_client: TestClient, collection_source):
@@ -646,7 +1135,7 @@ def test_toggle_grant_persists_and_bumps_version(auth_client: TestClient, grant_
 
     matrix = auth_client.get("/api/access/matrix").json()
     hr_row = next(r for r in matrix["rows"] if r["subject"] == "HR")
-    assert hr_row["cells"]["oup"] == {"read": True, "write": False}
+    assert hr_row["cells"]["oup"] == {"read": True, "write": False, "level": 1}
 
 
 def test_toggle_grant_off_rewrites_flags(auth_client: TestClient, grant_repository):
@@ -689,7 +1178,7 @@ def test_default_write_requires_explicit_grant(auth_client: TestClient):
     """`default` read is implicit for everyone, so no grant row is needed."""
     body = auth_client.get("/api/access/matrix").json()
     ivanov = next(r for r in body["rows"] if r["subject"] == "u-1")
-    assert ivanov["cells"]["default"] == {"read": False, "write": False}
+    assert ivanov["cells"]["default"] == {"read": False, "write": False, "level": 0}
 
 
 # --------------------------------------------------------------------------
@@ -754,7 +1243,7 @@ def test_change_password_rejects_short_and_identical(auth_client: TestClient):
 def test_every_mutation_writes_an_audit_record(auth_client: TestClient, event_repository):
     auth_client.post("/api/users/u-1/role", json={"role": "admin"})
     auth_client.post("/api/users/u-1/active", json={"is_active": False})
-    auth_client.post("/api/users/u-1/permissions", json={"permissions": ["jobs:view"]})
+    auth_client.post("/api/users/u-1/permissions", json={"permissions": ["system:manage"]})
     auth_client.post("/api/users/u-1/reset-role")
     auth_client.post("/api/roles", json={"name": "Translator"})
     auth_client.patch("/api/roles/Translator", json={"description": "d"})

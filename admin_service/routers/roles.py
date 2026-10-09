@@ -12,13 +12,19 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from admin_service.deps import AdminContainer, get_container, get_current_admin
-from admin_service.routers.users import HIDDEN_ROLE, find_role, known_permissions
+from admin_service.routers.users import (
+    HIDDEN_ROLE,
+    find_role,
+    known_permissions,
+    normalize_stored_permissions,
+)
 from admin_service.schemas import (
     RoleCreateRequest,
     RoleOut,
     RoleUpdateRequest,
     UserOut,
 )
+from file_translator.domain.auth import PERMISSION_LABELS
 from file_translator.infrastructure.auth.role_config import RoleDoc, SUBJECT_ROLE
 
 logger = logging.getLogger(__name__)
@@ -53,7 +59,8 @@ def _to_out(role: RoleDoc, member_count: int = 0) -> RoleOut:
         description=role.description,
         builtin=role.builtin,
         protected=role.protected,
-        permissions=list(role.permissions),
+        # Stale persisted rights are never surfaced (authorization spec).
+        permissions=normalize_stored_permissions(role.permissions, warn=False),
         grants=list(role.grants),
         member_count=member_count,
     )
@@ -121,8 +128,13 @@ async def update_role(
     fields: dict[str, object] = {}
     if payload.description is not None:
         fields["description"] = payload.description.strip()
+    # Always rewrite the permission list: an explicit payload is validated
+    # (unknown rights are rejected, "cannot be granted"), while an untouched
+    # list is normalized so stale Mongo keys are dropped on this save.
     if payload.permissions is not None:
         fields["permissions"] = _validate_permissions(payload.permissions)
+    else:
+        fields["permissions"] = normalize_stored_permissions(role.permissions)
     if payload.grants is not None:
         fields["grants"] = sorted(set(payload.grants))
     if not fields:
@@ -180,6 +192,18 @@ async def permissions_pool(
     """The permission pool a role or user override can pick from."""
     del container
     return sorted(known_permissions())
+
+
+@router.get("/permission-labels", response_model=dict[str, str])
+async def permission_labels(
+    _: str = Depends(get_current_admin),
+) -> dict[str, str]:
+    """Human-readable wording for each right, served from the domain enum.
+
+    The UI renders rights by label, so a new right cannot show up as a raw wire
+    value — and there is no second list of labels to keep in step.
+    """
+    return dict(PERMISSION_LABELS)
 
 
 @router.get("/{name}/members", response_model=list[UserOut])

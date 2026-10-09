@@ -19,7 +19,12 @@ from jose import JWTError, jwt
 
 from admin_service.config import SESSION_COOKIE, SESSION_TTL_HOURS, AdminConfig
 from file_translator.infrastructure.auth.admin_config_version import AdminConfigVersion
-from file_translator.infrastructure.auth.role_config import GrantStore, RoleConfigStore
+from file_translator.infrastructure.auth.role_config import (
+    DEFAULT_COLLECTION,
+    GrantDoc,
+    GrantStore,
+    RoleConfigStore,
+)
 from file_translator.infrastructure.repositories.auth_repository import MongoUserRepository
 from file_translator.infrastructure.repositories.mongo_admin_event_repository import (
     AdminEventRepository,
@@ -70,6 +75,25 @@ class MySQLCollectionSource:
         if table.startswith("glossary_"):
             return table[len("glossary_"):]
         return table
+
+
+async def known_collections(container: "AdminContainer", grants: list[GrantDoc]) -> list[str]:
+    """Collections from MySQL plus ``default`` and anything already granted.
+
+    Lives here rather than in the access router so both routers can ask the
+    same question: the access matrix and the per-collection view of one user
+    must never disagree about which collections exist (otherwise a collection
+    could be reported as "level 0, source none" on one screen and be absent
+    from the other).
+    """
+    names: set[str] = {DEFAULT_COLLECTION}
+    try:
+        names.update(await container.collection_source.list_collections())
+    except Exception:
+        # Both screens must stay usable while MySQL is down — grants still list.
+        logger.warning("Could not list collections from MySQL", exc_info=True)
+    names.update(g.collection for g in grants if g.collection)
+    return sorted(names)
 
 
 class AdminPasswordStore:

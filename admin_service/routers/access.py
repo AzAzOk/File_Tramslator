@@ -11,11 +11,16 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from admin_service.deps import AdminContainer, get_container, get_current_admin
+from admin_service.deps import (
+    AdminContainer,
+    get_container,
+    get_current_admin,
+    known_collections,
+)
 from admin_service.routers.users import HIDDEN_ROLE, find_role
 from admin_service.schemas import GrantRequest, MatrixOut, MatrixRow
+from file_translator.domain.auth import RoleType
 from file_translator.infrastructure.auth.role_config import (
-    DEFAULT_COLLECTION,
     SUBJECT_GROUP,
     SUBJECT_ROLE,
     SUBJECT_TYPES,
@@ -26,18 +31,6 @@ from file_translator.infrastructure.auth.role_config import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/access", tags=["access"])
-
-
-async def known_collections(container: AdminContainer, grants: list[GrantDoc]) -> list[str]:
-    """Collections from MySQL plus ``default`` and anything already granted."""
-    names: set[str] = {DEFAULT_COLLECTION}
-    try:
-        names.update(await container.collection_source.list_collections())
-    except Exception:
-        # The matrix must stay usable while MySQL is down — grants still list.
-        logger.warning("Could not list collections from MySQL", exc_info=True)
-    names.update(g.collection for g in grants if g.collection)
-    return sorted(names)
 
 
 @router.get("/collections", response_model=list[str])
@@ -58,47 +51,70 @@ async def matrix(
     grants = await container.grant_store.get_all_grants()
     collections = await known_collections(container, grants)
 
-    subjects: list[tuple[str, str, str]] = []
+    admin_name = RoleType.ADMIN.value
+    subjects: list[tuple[str, str, str, bool]] = []
     seen: set[tuple[str, str]] = set()
 
     for role in await container.role_store.get_all_roles():
         if role.name == HIDDEN_ROLE:
             continue
-        subjects.append((SUBJECT_ROLE, role.name, f"role: {role.name}"))
+        subjects.append(
+            (SUBJECT_ROLE, role.name, f"role: {role.name}", role.name == admin_name)
+        )
         seen.add((SUBJECT_ROLE, role.name))
 
     users = await container.user_repo.list_all()
     for user in users:
         key = (SUBJECT_USER, user.user_id)
+        unrestricted = getattr(user, "role_name", "") == admin_name
         if key not in seen:
-            subjects.append((SUBJECT_USER, user.user_id, f"user: {user.username or user.user_id}"))
+            subjects.append(
+                (SUBJECT_USER, user.user_id, f"user: {user.username or user.user_id}", unrestricted)
+            )
             seen.add(key)
         for group in user.ldap_groups or []:
             gkey = (SUBJECT_GROUP, group)
             if gkey not in seen:
-                subjects.append((SUBJECT_GROUP, group, f"group: {group}"))
+                subjects.append((SUBJECT_GROUP, group, f"group: {group}", False))
                 seen.add(gkey)
 
     for grant in grants:
         key = (grant.subject_type, grant.subject)
         if key not in seen:
-            subjects.append((grant.subject_type, grant.subject, f"{grant.subject_type}: {grant.subject}"))
+            subjects.append(
+                (
+                    grant.subject_type,
+                    grant.subject,
+                    f"{grant.subject_type}: {grant.subject}",
+                    grant.subject_type == SUBJECT_ROLE and grant.subject == admin_name,
+                )
+            )
             seen.add(key)
 
-    flags: dict[tuple[str, str, str], dict[str, bool]] = {}
+    no_cell: dict[str, object] = {"read": False, "write": False, "level": 0}
+    flags: dict[tuple[str, str, str], dict[str, object]] = {}
     for grant in grants:
         flags[(grant.subject_type, grant.subject, grant.collection)] = {
             "read": grant.read,
             "write": grant.write,
+            "level": grant.level,
         }
 
     rows: list[MatrixRow] = []
-    for subject_type, subject, label in subjects:
+    for subject_type, subject, label, unrestricted in subjects:
         cells = {
-            collection: flags.get((subject_type, subject, collection), {"read": False, "write": False})
+            collection: dict(flags.get((subject_type, subject, collection), no_cell))
             for collection in collections
         }
-        rows.append(MatrixRow(subject_type=subject_type, subject=subject, label=label, cells=cells))
+        rows.append(
+            MatrixRow(
+                subject_type=subject_type,
+                subject=subject,
+                label=label,
+                unrestricted=unrestricted,
+                cells=cells,
+            )
+        )
 
     return MatrixOut(collections=collections, rows=rows)
 
@@ -129,6 +145,9 @@ async def upsert_grant(
         collection=payload.collection,
         read=payload.read,
         write=payload.write,
+        # ``level`` wins over the flags when both are sent (GrantDoc derives the
+        # flags from it); ``None`` means a legacy flag-only request.
+        level=payload.level,
     )
     await container.grant_store.upsert_grant(grant)
     await container.audit(
@@ -136,7 +155,7 @@ async def upsert_grant(
         "access.grant_upserted",
         "grant",
         f"{payload.subject_type}:{payload.subject}@{payload.collection}",
-        {"read": payload.read, "write": payload.write},
+        {"read": grant.read, "write": grant.write, "level": grant.level},
     )
     return {"grant": grant.to_dict(), "config_version": await container.config_version.get_version()}
 
