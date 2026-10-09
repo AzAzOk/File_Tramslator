@@ -207,31 +207,102 @@ table.data tbody tr:hover {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-primary) 25%, transparent);
 }
 
-/* Access matrix: one column per collection, R/W checkbox pairs. */
+/* Access matrix: one column per collection, split by subject kind. The subject
+   column stays put while the ~26 collection columns scroll sideways, and each
+   cell carries a compact level badge instead of a control (the four-state
+   radio opens on demand in a popover). */
+.matrix-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.matrix-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.matrix-tab {
+  border: 1px solid var(--c-outline-variant);
+  border-radius: 999px;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--c-on-surface-variant);
+  cursor: pointer;
+}
+.matrix-tab:hover { border-color: var(--c-outline); }
+.matrix-tab.active {
+  border-color: var(--c-primary);
+  background: var(--c-surface-container-highest);
+  color: var(--c-on-surface);
+  font-weight: 600;
+}
+.matrix-search {
+  width: auto;
+  margin-left: auto;
+  min-width: 12rem;
+}
+.matrix-wrap { overflow-x: auto; }
 .matrix th.rot { min-width: 5.5rem; }
 .matrix td { text-align: center; }
+.matrix th.subject-col,
+.matrix td.row-label {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--c-surface);
+}
+.matrix th.subject-col { z-index: 2; }
 .matrix td.row-label {
   text-align: left;
   white-space: nowrap;
   font-size: 0.8125rem;
 }
-.matrix input[type="checkbox"] {
-  accent-color: var(--c-primary);
-  width: 0.9rem;
-  height: 0.9rem;
-  cursor: pointer;
-}
-.matrix td.cell-pair {
-  display: table-cell;
-  white-space: nowrap;
-}
-.matrix td.cell-pair label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
+.matrix tbody tr:hover td.row-label { background: var(--c-surface-container-low); }
+.matrix td.cell-level-cell { padding: 0.25rem; }
+.cell-level {
+  min-width: 2rem;
+  border: 1px solid var(--c-outline-variant);
+  border-radius: 0.375rem;
+  padding: 0.125rem 0.375rem;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.6875rem;
   color: var(--c-on-surface-variant);
-  margin-right: 0.375rem;
+  cursor: pointer;
+}
+.cell-level:hover {
+  border-color: var(--c-outline);
+  color: var(--c-on-surface);
+}
+.cell-level.level-2,
+.cell-level.level-3 {
+  border-color: var(--c-primary);
+  color: var(--c-on-surface);
+  font-weight: 600;
+}
+.matrix td.coll-unrestricted-cell {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--c-on-surface-variant);
+}
+
+/* The level picker: a small popover anchored to a cell's badge. `position:
+   fixed` keeps it clear of the horizontally scrolling wrapper. */
+.level-popover {
+  position: fixed;
+  z-index: 70;
+  border: 1px solid var(--c-outline);
+  border-radius: 0.5rem;
+  background: var(--c-surface-container-high);
+  padding: 0.5rem 0.625rem;
+  box-shadow: 0 10px 25px -5px color-mix(in srgb, var(--c-inverse-surface) 40%, transparent);
+}
+.level-popover-title {
+  margin-bottom: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--c-on-surface-variant);
 }
 
 /* ------------------------------------------------------------------- modal */
@@ -244,7 +315,9 @@ table.data tbody tr:hover {
   justify-content: center;
   padding: 1.5rem;
   z-index: 50;
-  backdrop-filter: blur(2px);
+  /* No backdrop-filter: a full-screen blur is re-composited on every frame,
+     which made scrolling a long dialog feel heavy on weak GPUs (round 10.3).
+     The 55% tint above already keeps the page behind readable-but-muted. */
 }
 .modal-card {
   width: 100%;
@@ -255,6 +328,23 @@ table.data tbody tr:hover {
   padding: 1.5rem;
   box-shadow: 0 25px 50px -12px color-mix(in srgb, var(--c-inverse-surface) 45%, transparent);
 }
+/* The dialog body is the scroll surface. `contain` stops the wheel from
+   chaining to the page behind once the list hits an end (the page is also
+   locked by JS), and a slim themed bar keeps long collection lists readable.
+   Style the standard scrollbar and the WebKit one — Firefox takes the former,
+   Chromium/WebKit the latter (round 10.3). */
+#modal-body {
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-outline) transparent;
+}
+#modal-body::-webkit-scrollbar { width: 8px; }
+#modal-body::-webkit-scrollbar-track { background: transparent; }
+#modal-body::-webkit-scrollbar-thumb {
+  background: var(--c-outline);
+  border-radius: 999px;
+}
+#modal-body::-webkit-scrollbar-thumb:hover { background: var(--c-on-surface-variant); }
 
 /* ------------------------------------------------------------------- toast */
 .toast {
@@ -273,6 +363,37 @@ table.data tbody tr:hover {
 }
 .toast.ok { border-color: var(--c-status-success); color: var(--c-on-surface); }
 .toast.err { border-color: var(--c-error); color: var(--c-on-surface); }
+
+/* ---------------------------------------------------------- users table
+   The row's actions are not equally consequential. Activation takes effect at
+   once and means what it says; resetting a manual role silently undid the
+   change next to it. The secondary action therefore gets its own line instead
+   of sharing a row of identical buttons. */
+.user-actions-cell {
+  white-space: nowrap;
+  vertical-align: top;
+}
+.user-actions {
+  display: flex;
+  gap: 0.375rem;
+}
+.user-actions-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-top: 0.375rem;
+  padding-top: 0.375rem;
+  border-top: 1px solid var(--c-outline-variant);
+}
+
+/* Chips wrap onto further lines. Inline badges collapsed the line box, so the
+   second line was drawn over the first; a wrapping flex container with a gap
+   keeps the spacing on both axes whatever the content length is. */
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
 
 /* --------------------------------------------------------------- perm grid */
 .perm-grid {
@@ -296,6 +417,111 @@ table.data tbody tr:hover {
   background: var(--c-surface-container-low);
 }
 .perm-grid input { accent-color: var(--c-primary); }
+
+/* ------------------------------------------------ rights dialog — two tabs */
+/* One dialog, one Save (design D8): the tabs only swap what is on screen, so
+   neither half of a decision is discarded when the administrator moves
+   between them. Underline, not pills — this is a document section switch,
+   not a set of actions. */
+.dlg-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--c-outline-variant);
+}
+.dlg-tab {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--c-on-surface-variant);
+  cursor: pointer;
+}
+.dlg-tab:hover { color: var(--c-on-surface); }
+.dlg-tab.active {
+  color: var(--c-on-surface);
+  font-weight: 600;
+  border-bottom-color: var(--c-primary);
+}
+/* Panes are plain containers — visibility is swapped with .hidden, and the
+   class exists so the tab wiring has one stable hook per pane. */
+.dlg-pane { display: block; }
+
+/* ------------------------------------------- rights dialog — collections */
+.coll-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin-top: 0.5rem;
+}
+/* Search sits between the legend and the list: one step of breathing room
+   below, the list adds its own gap above the rows. */
+.coll-search { font-size: 0.8125rem; }
+.coll-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--c-outline-variant);
+  border-radius: 0.5rem;
+  padding: 0.375rem 0.5rem;
+}
+.coll-row:hover { border-color: var(--c-outline); }
+.coll-name {
+  flex: 0 0 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.75rem;
+  color: var(--c-on-surface);
+}
+/* The four states as a segmented radio row: one glance shows the selected
+   position in the cascade, and the border (not mid-tone text) marks it so the
+   label keeps its WCAG AA contrast on both themes. */
+.coll-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.coll-levels label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid var(--c-outline-variant);
+  border-radius: 999px;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.6875rem;
+  color: var(--c-on-surface-variant);
+  cursor: pointer;
+}
+.coll-levels label:hover { border-color: var(--c-outline); }
+.coll-levels label:has(input:checked) {
+  border-color: var(--c-primary);
+  background: var(--c-surface-container-highest);
+  color: var(--c-on-surface);
+  font-weight: 600;
+}
+.coll-levels label.is-disabled,
+.coll-levels label:has(input:disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.coll-levels input {
+  margin: 0;
+  accent-color: var(--c-primary);
+}
+/* Unrestricted (built-in admin): a list of rows would read as "no access",
+   the exact misreport the endpoint avoids by returning the flag instead. */
+.coll-unrestricted {
+  border: 1px dashed var(--c-outline);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  text-align: center;
+  font-size: 0.8125rem;
+  color: var(--c-on-surface-variant);
+}
 
 /* ------------------------------------------- documentation page (/docs)
    Two columns: the guide's sections on the left, the article on the right.

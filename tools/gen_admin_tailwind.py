@@ -185,6 +185,7 @@ SUPPLEMENT = """
 .items-start { align-items: flex-start; }
 .gap-1\\.5 { gap: 0.375rem; }
 .mr-1 { margin-right: 0.25rem; }
+.mt-2 { margin-top: 0.5rem; }
 .mt-8 { margin-top: 2rem; }
 .p-5 { padding: 1.25rem; }
 .pb-6 { padding-bottom: 1.5rem; }
