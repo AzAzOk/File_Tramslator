@@ -33,6 +33,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
             return await call_next(request)
 
+        # Internal service-to-service endpoints authenticate with a shared
+        # token in their own dependency, not with a user JWT.
+        if path.startswith("/internal/"):
+            request.state.auth = AuthCredentials(
+                user=User(user_id="service", username="service",
+                          role=RoleType.VIEWER, is_active=False),
+            )
+            return await call_next(request)
+
         if path.startswith(("/static/", "/assets/")):
             request.state.auth = AuthCredentials(
                 user=User(user_id="anonymous", username="anonymous",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
 import re
@@ -91,6 +92,9 @@ app = FastAPI(
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS") else []
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "file_translator_auth")
+# Shared secret for service-to-service calls from the admin service. Unset
+# means the internal endpoints refuse to operate (no accidental backdoor).
+INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "")
 
 # JWT_SECRET is required — fail at startup if missing
 JWT_SECRET = os.getenv("JWT_SECRET")
@@ -336,6 +340,32 @@ async def _resolve_job_collection_id(user: Any, collection_id: str, filename: st
     return DEFAULT_COLLECTION
 
 
+# --- Periodic AD-group → collection grant sweep ---
+
+GROUP_GRANT_SWEEP_INTERVAL_SECONDS = 1800
+
+
+async def _group_grant_sweep(interval: int = GROUP_GRANT_SWEEP_INTERVAL_SECONDS) -> None:
+    """Periodically re-apply AD-group → collection view grants.
+
+    Covers collections created after startup. Idempotent: a pair that already
+    has a grant document — including an administrator's level-0 revoke — is
+    skipped, so nothing an administrator decided is overwritten.
+    """
+    while True:
+        await asyncio.sleep(interval)
+        provisioner = getattr(app.state, "group_grant_provisioner", None)
+        user_repo = getattr(app.state, "user_repo", None)
+        if provisioner is None or user_repo is None:
+            continue
+        try:
+            created = await provisioner.provision_all_users(user_repo)
+            if created:
+                logger.info(f"Provisioned {created} AD-group collection grant(s) on sweep")
+        except Exception as e:
+            logger.warning(f"AD-group grant sweep failed: {e}")
+
+
 # --- Periodic cleanup: temp dirs (1h TTL) + expired tokens ---
 
 async def _cleanup_orphaned_temp_dirs(interval: int = CLEANUP_INTERVAL_SECONDS) -> None:
@@ -488,6 +518,10 @@ async def _startup() -> None:
         # ── Role / grant configuration (Mongo-backed, runtime-managed) ──
         from file_translator.infrastructure.auth.admin_config_version import AdminConfigVersion
         from file_translator.infrastructure.auth.config_seeder import run_startup_seeding
+        from file_translator.infrastructure.auth.group_grants import (
+            GroupGrantProvisioner,
+            build_mysql_collection_lister,
+        )
         from file_translator.infrastructure.auth.glossary_access_resolver import GlossaryAccessResolver
         from file_translator.infrastructure.auth.role_config import GrantStore, RoleConfigStore
         from file_translator.infrastructure.repositories.mongo_config_repository import (
@@ -508,11 +542,20 @@ async def _startup() -> None:
         )
         access_resolver = GlossaryAccessResolver(role_store=role_store, grant_store=grant_store)
 
+        # An AD group whose name matches a collection id grants view access to
+        # that collection for every member. Applied at startup (backfill of
+        # existing users), on every login, and on a periodic sweep.
+        group_grant_provisioner = GroupGrantProvisioner(
+            list_collection_ids=build_mysql_collection_lister(),
+            grant_store=grant_store,
+        )
+
         app.state.auth_service = AuthService(
             auth_provider=jwt_provider,
             user_repository=user_repo,
             role_store=role_store,
             collection_resolver=access_resolver,
+            group_grant_provisioner=group_grant_provisioner,
         )
         app.state.auth_service.session_repo = session_repo
         app.state.jwt_provider = jwt_provider
@@ -522,6 +565,7 @@ async def _startup() -> None:
         app.state.grant_store = grant_store
         app.state.access_resolver = access_resolver
         app.state.config_version = config_version
+        app.state.group_grant_provisioner = group_grant_provisioner
 
         # Shared instance: the glossary service and the job pipeline must use
         # the same 30s-cached resolver (single source of truth for access).
@@ -535,6 +579,17 @@ async def _startup() -> None:
             )
         except Exception as e:
             logger.warning(f"Startup seeding failed (config stays unseeded): {e}")
+
+        # Backfill AD-group collection grants for users that already exist, then
+        # keep them current with a periodic sweep (a collection created later is
+        # picked up there). Best-effort — never block startup.
+        try:
+            created = await group_grant_provisioner.provision_all_users(user_repo)
+            if created:
+                logger.info(f"Provisioned {created} AD-group collection grant(s) at startup")
+        except Exception as e:
+            logger.warning(f"AD-group grant provisioning failed at startup: {e}")
+        asyncio.create_task(_group_grant_sweep())
 
         ldap_service = LdapService.from_env()
         if ldap_service:
@@ -1600,6 +1655,61 @@ async def download_job_result(
         filename=output_path.name,
         background=background_tasks,
     )
+
+
+# ── Internal service-to-service endpoints ──
+
+
+async def require_internal_token(request: Request) -> None:
+    """Gate internal endpoints on the shared admin-service token.
+
+    The caller is a service, not a user, so it presents ``X-Internal-Token``
+    instead of a JWT (the path prefix skips the auth middleware). When no token
+    is configured the endpoint refuses to run rather than accepting everyone.
+    """
+    if not INTERNAL_API_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Internal API token is not configured",
+        )
+    presented = request.headers.get("X-Internal-Token", "")
+    if not hmac.compare_digest(presented, INTERNAL_API_TOKEN):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid internal API token",
+        )
+
+
+@app.post("/internal/users/{user_id}/jobs/purge")
+async def purge_user_jobs(
+    user_id: str,
+    _: None = Depends(require_internal_token),
+) -> dict[str, int]:
+    """Stop and remove every translation job owned by a user.
+
+    Used by the admin service when a user is forgotten. A job that has not
+    started is dropped outright (queue entry cleared, temp dirs removed, record
+    deleted). A running job is cancelled and its record is deliberately left in
+    place so the pipeline still observes the cancellation at its next
+    checkpoint; the pipeline then cleans its temp dirs and deletes the record.
+    """
+    jobs = await translation_service.job_manager.list_jobs_by_user(user_id)
+    cancelled = 0
+    removed = 0
+    for job in jobs:
+        if job.status == JobStatus.RUNNING:
+            await translation_service.job_manager.cancel_job(job.job_id)
+            cancelled += 1
+            continue
+        await user_job_queue.cancel_pending(job.job_id)
+        _cleanup_job_temp_dirs(job, job.job_id)
+        await translation_service.job_manager.delete_job(job.job_id)
+        removed += 1
+    if jobs:
+        logger.info(
+            f"Purged jobs for user {user_id}: {cancelled} cancelled, {removed} removed"
+        )
+    return {"cancelled": cancelled, "removed": removed}
 
 
 # ── Feedback / Support ──

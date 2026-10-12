@@ -160,6 +160,10 @@ class JobManager:
     async def get_recent_jobs(self, limit: int = 10) -> list[Job]:
         """List most recent jobs."""
         return await self.repository.list_recent(limit)
+
+    async def list_jobs_by_user(self, user_id: str) -> list[Job]:
+        """List every job owned by a user, in any status."""
+        return await self.repository.list_by_user(user_id)
     
     async def is_cancelled(self, job_id: str) -> bool:
         """Check if a job has been cancelled (polled during processing)."""

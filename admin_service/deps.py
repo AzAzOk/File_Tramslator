@@ -25,7 +25,10 @@ from file_translator.infrastructure.auth.role_config import (
     GrantStore,
     RoleConfigStore,
 )
-from file_translator.infrastructure.repositories.auth_repository import MongoUserRepository
+from file_translator.infrastructure.repositories.auth_repository import (
+    MongoSessionRepository,
+    MongoUserRepository,
+)
 from file_translator.infrastructure.repositories.mongo_admin_event_repository import (
     AdminEventRepository,
 )
@@ -193,10 +196,12 @@ class AdminContainer:
     grant_store: GrantStore
     event_repo: AdminEventRepository
     user_repo: MongoUserRepository
+    session_repo: MongoSessionRepository
     collection_source: CollectionSource
     config_version: AdminConfigVersion
     passwords: AdminPasswordStore
     sessions: SessionTokens
+    http_client: Any
     clients: list[Any] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
@@ -232,6 +237,7 @@ class AdminContainer:
 
 async def build_container(config: AdminConfig) -> AdminContainer:
     """Create the production container from environment configuration."""
+    import httpx
     from motor.motor_asyncio import AsyncIOMotorClient
     from redis.asyncio import Redis
 
@@ -244,6 +250,11 @@ async def build_container(config: AdminConfig) -> AdminContainer:
         port=config.redis_port,
         password=config.redis_password or None,
         decode_responses=True,
+    )
+    http_client = httpx.AsyncClient(
+        base_url=config.main_api_url,
+        headers={"X-Internal-Token": config.internal_api_token},
+        timeout=30.0,
     )
 
     config_version = AdminConfigVersion(redis_client)
@@ -273,11 +284,13 @@ async def build_container(config: AdminConfig) -> AdminContainer:
         grant_store=grant_store,
         event_repo=event_repo,
         user_repo=user_repo,
+        session_repo=MongoSessionRepository(db),
         collection_source=MySQLCollectionSource(),
         config_version=config_version,
         passwords=AdminPasswordStore(db, config.password),
         sessions=SessionTokens(SessionTokens._secret_from_env()),
-        clients=[mongo_client, redis_client],
+        http_client=http_client,
+        clients=[mongo_client, redis_client, http_client],
     )
 
 

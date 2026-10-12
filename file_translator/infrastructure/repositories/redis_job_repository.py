@@ -214,6 +214,28 @@ class RedisJobRepository(JobRepository):
             jobs.append(self._deserialize(raw))
         return jobs
 
+    async def list_by_user(self, user_id: str) -> list[Any]:
+        """Return every job owned by ``user_id`` (any status).
+
+        Scans the shared index and filters on the record's ``user_id``; stale
+        index entries (record already expired) are pruned as encountered, the
+        same way the other list methods keep the index tidy.
+        """
+        conn = await self._conn()
+        cursor, keys = "0", None
+        owned: list[Any] = []
+        while cursor != 0:
+            cursor, keys = await conn.zscan(self._INDEX_KEY, cursor=cursor, count=100)
+            for member, _ in keys:
+                raw = await conn.get(self._job_key(member))
+                if raw is None:
+                    await conn.zrem(self._INDEX_KEY, member)
+                    continue
+                job = self._deserialize(raw)
+                if job.user_id == user_id:
+                    owned.append(job)
+        return owned
+
     async def delete(self, job_id: str) -> bool:
         conn = await self._conn()
         key = self._job_key(job_id)

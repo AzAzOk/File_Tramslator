@@ -12,6 +12,7 @@ import os
 from dataclasses import replace as copy_user
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from admin_service.deps import (
@@ -23,6 +24,7 @@ from admin_service.deps import (
 from admin_service.schemas import (
     AssignRoleRequest,
     CollectionAccessOut,
+    ForgetUserOut,
     RightsSaveResponse,
     SetActiveRequest,
     SetPermissionsRequest,
@@ -117,6 +119,45 @@ async def _load(container: AdminContainer, user_id: str):
             status_code=status.HTTP_404_NOT_FOUND, detail=f"User '{user_id}' not found"
         )
     return user
+
+
+async def _has_personal_trace(container: AdminContainer, user_id: str) -> bool:
+    """True when an id still owns personal grants or refresh tokens.
+
+    Personal traces can outlive the user record (a hand-deleted document, or a
+    forget that stopped halfway). Such an id has no record to load, so this is
+    what decides whether forgetting it is a real operation or just an unknown id.
+    """
+    grants = await container.grant_store.find_grants_for_subjects(
+        {SUBJECT_USER: [user_id]}
+    )
+    if grants:
+        return True
+    try:
+        return user_id in set(await container.session_repo.list_user_ids())
+    except Exception:
+        logger.warning("Could not list refresh-token owners", exc_info=True)
+        return False
+
+
+async def _orphan_subject_ids(container: AdminContainer) -> set[str]:
+    """Ids with personal traces but no user record.
+
+    They cannot log in and have no row in the users table, yet they keep showing
+    up in the access matrix as dangling ``user: <uuid>`` entries. Surfacing them
+    as rows is what gives the administrator a way to forget them.
+    """
+    known = {u.user_id for u in await container.user_repo.list_all()}
+    subjects = {
+        g.subject
+        for g in await container.grant_store.get_all_grants()
+        if g.subject_type == SUBJECT_USER and g.subject
+    }
+    try:
+        subjects.update(await container.session_repo.list_user_ids())
+    except Exception:
+        logger.warning("Could not list refresh-token owners", exc_info=True)
+    return subjects - known
 
 
 async def _read_back(container: AdminContainer, user_id: str):
@@ -243,6 +284,17 @@ async def list_users(
         role = user.role_name or (user.role.value if user.role else "")
         role_permissions = sorted(await container.role_store.resolve_permissions(role)) if role else []
         out.append(to_out(user, role_permissions))
+    # Orphans last: ids that lost their record but kept personal traces. They
+    # are shown so an administrator has a supported way to erase them.
+    for orphan_id in sorted(await _orphan_subject_ids(container)):
+        out.append(
+            UserOut(
+                user_id=orphan_id,
+                username="",
+                is_active=False,
+                orphan=True,
+            )
+        )
     return out
 
 
@@ -493,3 +545,80 @@ async def reset_to_ldap_role(
         {"from": previous, "to": derived, "manual_role": False},
     )
     return stored
+
+
+@router.post("/{user_id}/forget", response_model=ForgetUserOut)
+async def forget_user(
+    user_id: str,
+    container: AdminContainer = Depends(get_container),
+    admin: str = Depends(get_current_admin),
+) -> ForgetUserOut:
+    """Erase a person's identity: stop their jobs, then remove every personal trace.
+
+    The main API owns the job runtime (queue + temp files) and is called first,
+    so a failure to stop jobs aborts the whole operation and erases nothing —
+    forgetting is all-or-nothing, and safe to retry. The built-in administrator
+    and the acting administrator can never be forgotten. An id whose user record
+    is already gone (an orphan left by an earlier hand-delete) is still
+    forgettable while it owns personal grants or tokens.
+    """
+    user = await container.user_repo.get_by_id(user_id)
+    if user is None:
+        if not await _has_personal_trace(container, user_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User '{user_id}' not found",
+            )
+    else:
+        protected = {
+            (container.config.username or "").strip().lower(),
+            (admin or "").strip().lower(),
+        }
+        if (user.username or "").strip().lower() in protected:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Учётную запись «{user.username}» нельзя удалить",
+            )
+
+    try:
+        response = await container.http_client.post(
+            f"/internal/users/{user_id}/jobs/purge"
+        )
+    except httpx.HTTPError as exc:
+        logger.warning(f"Job purge for {user_id} failed: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Не удалось остановить задачи пользователя",
+        )
+    if response.status_code >= 400:
+        logger.warning(
+            f"Job purge for {user_id} returned {response.status_code}: {response.text}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Не удалось остановить задачи пользователя",
+        )
+    outcome = response.json() if response.content else {}
+
+    grants_removed = await container.grant_store.delete_many(
+        subject_type=SUBJECT_USER, subject=user_id
+    )
+    tokens_removed = await container.session_repo.delete_refresh_tokens_for_user(user_id)
+    await container.user_repo.delete(user_id)
+
+    result = ForgetUserOut(
+        user_id=user_id,
+        username=(user.username or user_id) if user else user_id,
+        jobs_stopped=outcome["cancelled"],
+        jobs_removed=outcome["removed"],
+        grants_removed=grants_removed,
+        tokens_removed=tokens_removed,
+    )
+    await container.audit(
+        admin,
+        "user.forgotten",
+        "user",
+        user_id,
+        {**result.model_dump(exclude={"user_id", "username"}), "orphan": user is None},
+    )
+    return result

@@ -38,6 +38,10 @@ class UserOut(BaseModel):
     # The role this user would get from their AD groups. Lets the UI state the
     # consequence of a reset without a second request.
     ldap_role: str = ""
+    # True for an id that has no user record but still owns personal grants or
+    # refresh tokens (an identity orphaned by an earlier hand-deleted record).
+    # Such a row can only be forgotten — there is no record to edit.
+    orphan: bool = False
 
 
 class AssignRoleRequest(BaseModel):
@@ -86,6 +90,21 @@ class UserAccessOut(BaseModel):
     #: instead of showing an empty list that would read as "no access".
     unrestricted: bool = False
     collections: list[CollectionAccessOut] = []
+
+
+class ForgetUserOut(BaseModel):
+    """Outcome of forgetting a user: what was stopped and what was erased."""
+
+    user_id: str
+    username: str
+    #: Jobs the translation pipeline was told to stop.
+    jobs_stopped: int = 0
+    #: Not-yet-started jobs dropped outright (record + temp files).
+    jobs_removed: int = 0
+    #: Personal collection grants removed.
+    grants_removed: int = 0
+    #: Refresh tokens removed.
+    tokens_removed: int = 0
 
 
 class RoleCreateRequest(BaseModel):

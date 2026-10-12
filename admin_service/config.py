@@ -44,6 +44,8 @@ class AdminConfig:
     host: str
     port: int
     log_level: str
+    main_api_url: str
+    internal_api_token: str
     guide_path: Path = field(default_factory=default_guide_path)
 
     @classmethod
@@ -64,6 +66,8 @@ class AdminConfig:
             host=os.environ.get("ADMIN_HOST", "0.0.0.0"),
             port=int(os.environ.get("ADMIN_PORT", "8011")),
             log_level=os.environ.get("LOG_LEVEL", "INFO"),
+            main_api_url=os.environ.get("MAIN_API_URL", "http://api:8000").rstrip("/"),
+            internal_api_token=os.environ.get("INTERNAL_API_TOKEN", ""),
             guide_path=Path(
                 os.environ.get("ADMIN_GUIDE_PATH") or default_guide_path()
             ),

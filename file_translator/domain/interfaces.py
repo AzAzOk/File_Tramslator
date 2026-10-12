@@ -225,6 +225,11 @@ class JobRepository(ABC):
         ...
 
     @abstractmethod
+    async def list_by_user(self, user_id: str) -> list[Any]:
+        """List every job owned by a user (any status)."""
+        ...
+
+    @abstractmethod
     async def delete(self, job_id: str) -> bool:
         """Delete a job permanently."""
         ...

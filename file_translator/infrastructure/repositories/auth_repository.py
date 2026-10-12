@@ -141,6 +141,22 @@ class MongoSessionRepository:
         result = await self._sessions.delete_many({"user_id": user_id})
         return result.deleted_count
 
+    async def delete_refresh_tokens_for_user(self, user_id: str) -> int:
+        """Delete every refresh token issued to a user. Returns the count removed."""
+        result = await self._refresh_tokens.delete_many({"user_id": user_id})
+        return result.deleted_count
+
+    async def list_user_ids(self) -> list[str]:
+        """Distinct user ids that still hold at least one refresh token.
+
+        A user record can be removed (by hand, or by a forget that half-finished)
+        while its refresh tokens outlive it. Those ids are invisible to
+        ``list_all`` but still surface in the access matrix, so the admin service
+        uses this to offer them for forgetting.
+        """
+        ids = await self._refresh_tokens.distinct("user_id")
+        return [str(uid) for uid in ids if uid]
+
     async def store_refresh_token(self, token: str, user_id: str,
                                   expires_at: datetime) -> str:
         await self._refresh_tokens.insert_one({

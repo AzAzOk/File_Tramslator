@@ -312,6 +312,28 @@ async function renderUsers() {
       </tr></thead>
       <tbody>${users
         .map((u) => {
+          if (u.orphan) {
+            // No user record: only personal traces are left. There is nothing to
+            // edit, so the row offers forgetting and nothing else.
+            return `<tr>
+              <td>
+                <div class="font-medium text-on-surface">${esc(u.user_id)}</div>
+                <div class="mt-1"><span class="badge badge-danger">остатки без записи</span></div>
+              </td>
+              <td>—</td>
+              <td>—</td>
+              <td>—</td>
+              <td>—</td>
+              <td class="text-xs text-on-surface-variant">личные права и токены без пользователя</td>
+              <td class="user-actions-cell">
+                <div class="user-actions">
+                  <button class="btn btn-danger js-forget" data-id="${esc(u.user_id)}" data-username="${esc(
+                    u.user_id
+                  )}">Забыть</button>
+                </div>
+              </td>
+            </tr>`;
+          }
           const own = u.permissions || [];
           const lowered = u.denied || [];
           // The server's formula — (роль ∖ denied) ∪ permissions — is the one
@@ -371,6 +393,9 @@ async function renderUsers() {
                 <button class="btn js-toggle-active" data-id="${esc(u.user_id)}" data-active="${u.is_active}">${
                   u.is_active ? 'Отключить' : 'Включить'
                 }</button>
+                <button class="btn btn-danger js-forget" data-id="${esc(u.user_id)}" data-username="${esc(
+                  u.username || u.user_id
+                )}">Забыть</button>
               </div>
               ${
                 u.manual_role || deviations
@@ -571,6 +596,29 @@ async function renderUsers() {
           renderUsers();
         },
         'Сбросить к AD'
+      );
+    })
+  );
+
+  $('#page-body').querySelectorAll('.js-forget').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      const name = btn.dataset.username;
+      openModal(
+        'Забыть пользователя?',
+        `<p class="text-sm">Пользователь <strong>«${esc(name)}»</strong>
+           будет удалён так, будто никогда не входил: запись, личные права на
+           коллекции и refresh-токены. Его задачи будут остановлены и очищены.
+           Общие данные и журнал аудита остаются; при следующем входе через AD
+           он заведётся заново без личных прав.</p>`,
+        async () => {
+          const res = await api(`/api/users/${btn.dataset.id}/forget`, { method: 'POST' });
+          toast(
+            `«${esc(res.username)}» забыт: задач остановлено ${res.jobs_stopped}, ` +
+              `удалено ${res.jobs_removed}, прав ${res.grants_removed}, токенов ${res.tokens_removed}`
+          );
+          renderUsers();
+        },
+        'Забыть'
       );
     })
   );

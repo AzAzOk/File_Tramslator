@@ -28,11 +28,13 @@ class AuthService:
     def __init__(self, auth_provider: AuthProvider | None = None,
                  user_repository: UserRepository | None = None,
                  role_store: Any | None = None,
-                 collection_resolver: Any | None = None):
+                 collection_resolver: Any | None = None,
+                 group_grant_provisioner: Any | None = None):
         self._auth_provider = auth_provider
         self._user_repository = user_repository
         self._role_store = role_store
         self._collection_resolver = collection_resolver
+        self._group_grant_provisioner = group_grant_provisioner
         self.session_repo: Any = None
         self.ldap_service: Any = None
     
@@ -136,7 +138,7 @@ class AuthService:
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
             await self.user_repository.create(user)
-            logger.info(f"User '{username}' auto-created via LDAP with role {role.value}")
+            logger.info(f"User '{username}' created (first appearance)")
         elif not user.is_active:
             logger.warning(f"Login failed: user '{username}' inactive")
             return None
@@ -156,6 +158,16 @@ class AuthService:
                 logger.info(f"User '{username}' role updated to {role.value} via LDAP")
             if changed:
                 await self.user_repository.update(user)
+
+        # Re-provision on every successful login so an AD group that first
+        # appears now grants access immediately. A collection created later is
+        # covered by the periodic sweep in the API lifespan. Best-effort: a
+        # provisioning failure never fails the login.
+        if self._group_grant_provisioner is not None:
+            try:
+                await self._group_grant_provisioner.provision(user)
+            except Exception as e:
+                logger.warning(f"AD-group grant provisioning failed for '{username}': {e}")
 
         token = await self.auth_provider.create_token(user.user_id)
         user.last_login_at = datetime.now(timezone.utc).isoformat()

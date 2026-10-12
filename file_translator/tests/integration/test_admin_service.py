@@ -13,6 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -24,6 +25,7 @@ from admin_service.deps import AdminContainer, AdminPasswordStore, SessionTokens
 from file_translator.domain.auth import Permission, RoleType, User  # noqa: E402
 from file_translator.infrastructure.auth.role_config import (  # noqa: E402
     DEFAULT_ROLES,
+    SUBJECT_USER,
     GrantDoc,
     GrantStore,
     RoleConfigStore,
@@ -239,6 +241,50 @@ class FakeConfigVersion:
         return self.value
 
 
+class FakeSessionRepository:
+    """Stands in for the Mongo refresh-token collection."""
+
+    def __init__(self, tokens: int = 5, user_ids: list[str] | None = None) -> None:
+        self.tokens = tokens
+        #: Ids that currently own at least one refresh token; drives orphan
+        #: detection and the "is there a trace left" check.
+        self.user_ids = list(user_ids or [])
+        self.deleted_users: list[str] = []
+
+    async def delete_refresh_tokens_for_user(self, user_id: str) -> int:
+        self.deleted_users.append(user_id)
+        return self.tokens
+
+    async def list_user_ids(self) -> list[str]:
+        return list(self.user_ids)
+
+
+class FakeHttpResponse:
+    def __init__(self, status_code: int = 200, body: dict[str, Any] | None = None) -> None:
+        self.status_code = status_code
+        self._body = body if body is not None else {}
+        self.content = b"{}" if body is not None else b""
+        self.text = "" if body is not None else "boom"
+
+    def json(self) -> dict[str, Any]:
+        return self._body
+
+
+class FakeHttpClient:
+    """Stands in for the internal ``httpx.AsyncClient`` to the main API."""
+
+    def __init__(self, response: FakeHttpResponse | None = None) -> None:
+        self.calls: list[str] = []
+        self.response = response or FakeHttpResponse(200, {"cancelled": 1, "removed": 2})
+        self.raise_error: Exception | None = None
+
+    async def post(self, url: str) -> FakeHttpResponse:
+        self.calls.append(url)
+        if self.raise_error is not None:
+            raise self.raise_error
+        return self.response
+
+
 def make_user(
     user_id: str,
     username: str,
@@ -303,13 +349,30 @@ def event_repository() -> FakeEventRepository:
 
 
 @pytest.fixture
+def session_repository() -> FakeSessionRepository:
+    return FakeSessionRepository()
+
+
+@pytest.fixture
+def http_client() -> FakeHttpClient:
+    return FakeHttpClient()
+
+
+@pytest.fixture
 def collection_source() -> FakeCollectionSource:
     return FakeCollectionSource(["default", "dtd", "oup"])
 
 
 @pytest.fixture
 def container(
-    version, role_repository, grant_repository, user_repository, event_repository, collection_source
+    version,
+    role_repository,
+    grant_repository,
+    user_repository,
+    event_repository,
+    session_repository,
+    http_client,
+    collection_source,
 ) -> AdminContainer:
     role_store = RoleConfigStore(
         role_repository,
@@ -337,6 +400,8 @@ def container(
         host="127.0.0.1",
         port=8011,
         log_level="INFO",
+        main_api_url="http://api:8000",
+        internal_api_token="test-internal-token",
     )
     return AdminContainer(
         config=config,
@@ -344,10 +409,12 @@ def container(
         grant_store=grant_store,
         event_repo=event_repository,
         user_repo=user_repository,
+        session_repo=session_repository,
         collection_source=collection_source,
         config_version=version,
         passwords=AdminPasswordStore(FakeDb(), ADMIN_PASSWORD),
         sessions=SessionTokens("test-secret", ttl_hours=1),
+        http_client=http_client,
     )
 
 
@@ -1412,3 +1479,181 @@ def test_documentation_page_is_served_without_a_session(client: TestClient):
     page = client.get("/docs")
     assert page.status_code == 200
     assert "docs.js" in page.text
+
+
+# --- Forget user (change: forget-user, task 5.3) ---------------------------------
+
+
+def _seed_personal_grant(grant_repository, user_id: str = "u-1") -> None:
+    grant_repository.grants[(SUBJECT_USER, user_id, "dtd")] = GrantDoc(
+        subject_type=SUBJECT_USER, subject=user_id, collection="dtd", read=True, write=True
+    )
+
+
+def test_forget_user_erases_personal_trace_and_keeps_shared_data(
+    auth_client: TestClient,
+    container: AdminContainer,
+    user_repository,
+    grant_repository,
+    session_repository,
+    event_repository,
+):
+    _seed_personal_grant(grant_repository)
+    shared_before = {k for k in grant_repository.grants if k[0] != SUBJECT_USER}
+    audits_before = len(event_repository.events)
+
+    response = auth_client.post("/api/users/u-1/forget")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["username"] == "ivanov"
+    assert body["grants_removed"] == 1
+    assert body["tokens_removed"] == 5
+    assert body["jobs_stopped"] == 1
+    assert body["jobs_removed"] == 2
+
+    # Identity, personal grant and tokens gone; shared grants untouched.
+    assert "u-1" not in user_repository.users
+    assert session_repository.deleted_users == ["u-1"]
+    assert not any(key[0] == SUBJECT_USER for key in grant_repository.grants)
+    assert shared_before <= set(grant_repository.grants)
+
+    # The job stop was requested from the main API with the user id.
+    assert container.http_client.calls == ["/internal/users/u-1/jobs/purge"]
+
+    # Audit history grows by exactly one user.forgotten record and is kept.
+    assert len(event_repository.events) == audits_before + 1
+    audit = [e for e in event_repository.events if e["action"] == "user.forgotten"]
+    assert len(audit) == 1
+    assert audit[0]["target"] == "u-1"
+    assert audit[0]["details"]["grants_removed"] == 1
+
+
+def test_forget_user_refuses_builtin_and_acting_admin(
+    auth_client: TestClient, user_repository, event_repository
+):
+    user_repository.users["u-root"] = make_user("u-root", ADMIN_USER, role="admin")
+
+    response = auth_client.post("/api/users/u-root/forget")
+
+    assert response.status_code == 400
+    assert "u-root" in user_repository.users
+    assert not any(e["action"] == "user.forgotten" for e in event_repository.events)
+
+
+def test_forget_user_404s_for_unknown_user(auth_client: TestClient):
+    assert auth_client.post("/api/users/does-not-exist/forget").status_code == 404
+
+
+def test_forget_user_aborts_when_job_stop_fails(
+    auth_client: TestClient,
+    container: AdminContainer,
+    user_repository,
+    grant_repository,
+    session_repository,
+    event_repository,
+):
+    _seed_personal_grant(grant_repository)
+    container.http_client.raise_error = httpx.ConnectError("no route")
+
+    response = auth_client.post("/api/users/u-1/forget")
+
+    assert response.status_code == 502
+    # Nothing was erased — jobs first, all-or-nothing.
+    assert "u-1" in user_repository.users
+    assert any(key[1] == "u-1" for key in grant_repository.grants)
+    assert session_repository.deleted_users == []
+    assert not any(e["action"] == "user.forgotten" for e in event_repository.events)
+
+
+def test_forget_user_aborts_on_non_2xx_job_stop(
+    auth_client: TestClient,
+    container: AdminContainer,
+    user_repository,
+    grant_repository,
+    session_repository,
+):
+    _seed_personal_grant(grant_repository)
+    container.http_client.response = FakeHttpResponse(503)
+
+    response = auth_client.post("/api/users/u-1/forget")
+
+    assert response.status_code == 502
+    assert "u-1" in user_repository.users
+    assert session_repository.deleted_users == []
+
+
+def test_forget_user_reruns_after_a_partial_failure(
+    auth_client: TestClient, user_repository, grant_repository, session_repository
+):
+    # A previous attempt erased the personal grant and tokens but crashed before
+    # the user record was removed. The retry must finish, not fail on the
+    # already-removed pieces.
+    _seed_personal_grant(grant_repository)
+    grant_repository.grants.pop((SUBJECT_USER, "u-1", "dtd"))
+    session_repository.tokens = 0
+
+    response = auth_client.post("/api/users/u-1/forget")
+
+    assert response.status_code == 200
+    assert response.json()["grants_removed"] == 0
+    assert "u-1" not in user_repository.users
+
+
+def test_forget_user_is_safe_to_repeat(auth_client: TestClient, user_repository):
+    assert auth_client.post("/api/users/u-1/forget").status_code == 200
+
+    # The user is already gone: a retry answers "not found" and never performs a
+    # second, contradictory deletion.
+    assert auth_client.post("/api/users/u-1/forget").status_code == 404
+    assert "u-1" not in user_repository.users
+
+
+def test_forget_user_via_http_error_is_502(
+    auth_client: TestClient, container: AdminContainer, user_repository
+):
+    container.http_client.raise_error = httpx.ConnectError("no route")
+
+    assert auth_client.post("/api/users/u-1/forget").status_code == 502
+    assert "u-1" in user_repository.users
+
+
+def test_list_users_includes_orphan_subjects(
+    auth_client: TestClient, grant_repository, session_repository
+):
+    # A grant owner and a token owner, neither of which has a user record.
+    grant_repository.grants[(SUBJECT_USER, "ghost-grant", "dtd")] = GrantDoc(
+        subject_type=SUBJECT_USER, subject="ghost-grant", collection="dtd", read=True
+    )
+    session_repository.user_ids = ["ghost-token", "u-1"]
+
+    rows = auth_client.get("/api/users").json()
+    by_id = {r["user_id"]: r for r in rows}
+
+    assert by_id["ghost-grant"]["orphan"] is True
+    assert by_id["ghost-token"]["orphan"] is True
+    # A real user that also owns a token is not duplicated as an orphan.
+    assert by_id["u-1"]["orphan"] is False
+
+
+def test_forget_orphan_removes_grants_and_tokens(
+    auth_client: TestClient, grant_repository, session_repository, event_repository
+):
+    grant_repository.grants[(SUBJECT_USER, "ghost", "dtd")] = GrantDoc(
+        subject_type=SUBJECT_USER, subject="ghost", collection="dtd", read=True, write=True
+    )
+    session_repository.user_ids = ["ghost"]
+
+    response = auth_client.post("/api/users/ghost/forget")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["grants_removed"] == 1
+    assert body["tokens_removed"] == 5
+    assert not any(key[1] == "ghost" for key in grant_repository.grants)
+    assert session_repository.deleted_users == ["ghost"]
+    audit = [e for e in event_repository.events if e["action"] == "user.forgotten"]
+    assert len(audit) == 1
+    assert audit[0]["target"] == "ghost"
+    assert audit[0]["details"]["orphan"] is True
+
