@@ -27,7 +27,7 @@ from file_translator.domain.errors import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONVERTER_URL = "http://172.17.106.164:8001"
+DEFAULT_CONVERTER_URL = "http://10.10.10.10:8001"
 DEFAULT_MAX_TIMEOUT = 3600.0  # seconds; hard cap for any single conversion
 
 # Smart timeout model (spike-proven: 23 MB PDF → ~85 s; 13 MB observed 165 s)

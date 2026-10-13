@@ -137,7 +137,7 @@ Key environment variables (see `.env` / `docker-compose.yml`):
 | `GLOSSARY_DB_*` | — | External MySQL glossary |
 | `JWT_SECRET` | — (required) | JWT signing secret |
 | `LDAP_*` | — | LDAP (Active Directory) settings |
-| `FIRST_PDF_CONVERTER_URL` | `http://172.17.106.164:8001` | PDF→DOCX converter base URL |
+| `FIRST_PDF_CONVERTER_URL` | `http://10.10.10.10:8001` | PDF→DOCX converter base URL |
 | `DEBUG_KEEP_ARTIFACTS` | off | Keep job XLIFF/temp dirs for diagnostics |
 
 On the converter host: `FIRST_PDF_TIMEOUT=180` (recommended floor; per-size deadlines come from the client's `X-Timeout-Seconds` header, capped by `FIRST_PDF_MAX_TIMEOUT`).

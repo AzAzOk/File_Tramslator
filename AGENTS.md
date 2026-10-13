@@ -76,8 +76,10 @@ which drives the **First PDF 6.4** desktop app via Windows UI Automation.
 
 **Why a separate service**: First PDF is a desktop WinForms/WPF app that needs an
 interactive Windows session and cannot run inside the Docker container. The main
-API stays Docker-based and calls the converter over HTTP (`http://172.17.106.164:8001`,
-override with `PDF_CONVERTER_URL`). OCR is intentionally **not** used — First PDF
+API stays Docker-based and calls the converter over HTTP (`http://10.10.10.10:8001`,
+override with `FIRST_PDF_CONVERTER_URL`; the Docker compose sets it to
+`http://host.docker.internal:8001` which the host portproxy forwards to
+`10.10.10.10:8001`). OCR is intentionally **not** used — First PDF
 produces a text-layer DOCX that Tikal can process.
 
 **How the pipeline works**:
