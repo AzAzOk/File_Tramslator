@@ -260,6 +260,27 @@ table.data tbody tr:hover {
   font-size: 0.8125rem;
 }
 .matrix tbody tr:hover td.row-label { background: var(--c-surface-container-low); }
+/* Compact icon button that retires a group from its row. Styled here rather
+   than with `.btn` so the shared `.btn` padding (styles.css loads after
+   tailwind.css) cannot bloat it inside the narrow sticky label cell. */
+.matrix-delete-group {
+  margin-left: 0.5rem;
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  line-height: 1;
+  font-size: 0.6875rem;
+  border-radius: 9999px;
+  vertical-align: middle;
+  border: 1px solid color-mix(in srgb, var(--c-error) 55%, transparent);
+  background: color-mix(in srgb, var(--c-error) 10%, transparent);
+  color: var(--c-on-surface);
+  cursor: pointer;
+}
+.matrix-delete-group:hover {
+  background: color-mix(in srgb, var(--c-error) 18%, transparent);
+  border-color: color-mix(in srgb, var(--c-error) 75%, transparent);
+}
 .matrix td.cell-level-cell { padding: 0.25rem; }
 .cell-level {
   min-width: 2rem;

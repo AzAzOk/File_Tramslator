@@ -142,6 +142,13 @@ class GrantRequest(BaseModel):
     level: int | None = Field(default=None, ge=0, le=3)
 
 
+class GroupDeleteRequest(BaseModel):
+    #: The group subject. Deletion matches every grant whose subject equals this
+    #: string case-insensitively, so both spellings of a deduplicated row are
+    #: cleared together.
+    subject: str = Field(min_length=1, max_length=256)
+
+
 class MatrixRow(BaseModel):
     subject_type: str
     subject: str

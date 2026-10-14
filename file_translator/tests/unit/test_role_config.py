@@ -335,6 +335,22 @@ async def test_find_grants_for_subjects() -> None:
     assert {m.collection for m in matched} == {"c1", "c2"}
 
 
+@pytest.mark.asyncio
+async def test_find_grants_for_subjects_group_case_insensitive() -> None:
+    repo = FakeGrantRepository([
+        GrantDoc(subject_type=SUBJECT_GROUP, subject="CEM_USERS", collection="c1", level=1),
+        GrantDoc(subject_type=SUBJECT_ROLE, subject="User", collection="c2", level=1),
+        GrantDoc(subject_type=SUBJECT_USER, subject="u1", collection="c3", level=1),
+    ])
+    store = GrantStore(repo)
+    matched = await store.find_grants_for_subjects(
+        {SUBJECT_GROUP: ["cem_users"], SUBJECT_ROLE: ["user"]}
+    )
+    # The group grant matches despite the case difference; the role grant keeps
+    # its exact match, so the differently-cased role candidate does NOT match.
+    assert [m.subject for m in matched] == ["CEM_USERS"]
+
+
 # --- Resolver ----------------------------------------------------------------
 
 def make_resolver(

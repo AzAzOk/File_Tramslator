@@ -775,9 +775,26 @@ function matrixTableHtml() {
     .filter((row) => row.subject_type === view)
     .map((row) => {
       const kind = row.subject_type === 'user' ? 'badge-neutral' : 'badge-accent';
+      // Delete is offered on group rows while no cell grants a level (>= 1)
+      // anywhere — the server re-checks the same condition on DELETE. Level-0
+      // denials never block, so a retired group can always be removed.
+      const rowCells = row.cells || {};
+      const deletable =
+        row.subject_type === 'group' &&
+        Object.values(rowCells).every(
+          (cell) => (Number(cell && cell.level) || 0) < 1
+        );
       const label = `<td class="row-label"><span class="badge ${kind}">${esc(
         row.subject_type
-      )}</span> ${esc(row.label.replace(/^[a-z]+: /, ''))}</td>`;
+      )}</span> ${esc(row.label.replace(/^[a-z]+: /, ''))}${
+        deletable
+          ? `<button type="button" class="matrix-delete-group" data-subject="${esc(
+              row.subject
+            )}" title="Удалить группу и все её гранты" aria-label="Удалить группу ${esc(
+              row.subject
+            )}">✕</button>`
+          : ''
+      }</td>`;
       if (row.unrestricted) {
         return `<tr>${label}
           <td class="coll-unrestricted-cell" colspan="${collections.length || 1}">
@@ -885,6 +902,125 @@ function drawMatrixTable() {
       openLevelPopover(btn);
     })
   );
+  mount.querySelectorAll('.matrix-delete-group').forEach((btn) =>
+    btn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      openDeleteGroupModal(btn.dataset.subject);
+    })
+  );
+}
+
+// Adds a group row that has no matching collection and no grant yet: without
+// this control such a group could never appear (task matrix-hide-unmatched).
+// Autocomplete covers every LDAP group and existing group grant, the collection
+// picker floors `default` at 1 (everyone may read it), and saving PUTs a grant,
+// after which the server includes the row on the next matrix fetch.
+async function openAddGroupModal() {
+  let knownGroups = [];
+  try {
+    knownGroups = await api('/api/access/groups');
+  } catch {
+    knownGroups = [];
+  }
+  const collections = matrixState.data.collections || [];
+  const collectionOptions =
+    collections
+      .map((c) => `<option value="${esc(c)}">${esc(c)}</option>`)
+      .join('') || '<option value="default">default</option>';
+  openModal(
+    'Добавить группу',
+    `<div class="space-y-3">
+      <div>
+        <label class="label" for="js-add-group-name">Имя группы (AD)</label>
+        <input
+          id="js-add-group-name" class="input w-full" list="js-add-group-options"
+          placeholder="Например, CEM_USERS"
+        />
+        <datalist id="js-add-group-options">${knownGroups
+          .map((g) => `<option value="${esc(g)}"></option>`)
+          .join('')}</datalist>
+      </div>
+      <div>
+        <label class="label" for="js-add-group-collection">Коллекция</label>
+        <select id="js-add-group-collection" class="input w-full">${collectionOptions}</select>
+      </div>
+      <div>
+        <label class="label">Уровень доступа</label>
+        <div id="js-add-group-levels"></div>
+      </div>
+    </div>`,
+    addGroupFromModal,
+    'Добавить'
+  );
+  const nameInput = $('#js-add-group-name');
+  const collectionSelect = $('#js-add-group-collection');
+  const levelMount = $('#js-add-group-levels');
+  const renderLevels = () => {
+    const floor = collectionSelect.value === 'default' ? 1 : 0;
+    levelMount.innerHTML = collectionLevels('js-add-group-level', 1, { floor });
+  };
+  renderLevels();
+  collectionSelect.addEventListener('change', renderLevels);
+  nameInput.focus();
+}
+
+async function addGroupFromModal() {
+  const name = ($('#js-add-group-name').value || '').trim();
+  if (!name) {
+    toast('Укажите имя группы', 'err');
+    return false;
+  }
+  const collection = $('#js-add-group-collection').value;
+  const level = Number(
+    document.querySelector('input[name="js-add-group-level"]:checked')?.value || 1
+  );
+  try {
+    const result = await api('/api/access/grant', {
+      method: 'PUT',
+      body: JSON.stringify({ subject_type: 'group', subject: name, collection, level }),
+    });
+    setVersion(result.config_version);
+    matrixState.data = await api('/api/access/matrix');
+    drawMatrixTable();
+    toast(`Группа добавлена: ${name} @ ${collection} — версия ${result.config_version}`);
+    return true;
+  } catch (err) {
+    toast(err.message, 'err');
+    return false;
+  }
+}
+
+// Delete is guarded server-side (no effective rights on any glossary); the UI
+// only ever offers it on rows that already hold no level >= 1 (see deletable in
+// matrixTableHtml), and the server re-checks to close the race.
+function openDeleteGroupModal(subject) {
+  openModal(
+    'Удалить группу',
+    `<p class="text-sm text-on-surface">Удалить группу <span class="font-medium">${esc(
+      subject
+    )}</span> и все её гранты?</p>
+     <p class="mt-2 text-xs text-on-surface-variant">Удаление доступно, только пока у группы нет прав ни на одном
+     глоссарии. Если имя группы всё ещё совпадает с коллекцией, строка останется в матрице.</p>`,
+    () => deleteGroup(subject),
+    'Удалить'
+  );
+}
+
+async function deleteGroup(subject) {
+  try {
+    const result = await api('/api/access/groups', {
+      method: 'DELETE',
+      body: JSON.stringify({ subject }),
+    });
+    setVersion(result.config_version);
+    matrixState.data = await api('/api/access/matrix');
+    drawMatrixTable();
+    toast(`Группа удалена: ${subject} — снято грантов: ${result.grants_removed}`);
+    return true;
+  } catch (err) {
+    toast(err.message, 'err');
+    return false;
+  }
 }
 
 async function renderAccess() {
@@ -905,6 +1041,11 @@ async function renderAccess() {
       <input type="search" class="input matrix-search" placeholder="Найти коллекцию…" value="${esc(
         matrixState.filter
       )}" />
+      <button
+        type="button"
+        id="js-add-group-btn"
+        class="btn btn-primary${matrixState.view === 'group' ? '' : ' hidden'}"
+      >+ Добавить группу</button>
     </div>
     <div class="table-wrap matrix-wrap"><div id="matrix-table"></div></div>`;
 
@@ -914,6 +1055,7 @@ async function renderAccess() {
       $('#page-body')
         .querySelectorAll('.matrix-tab')
         .forEach((t) => t.classList.toggle('active', t === tab));
+      $('#js-add-group-btn').classList.toggle('hidden', matrixState.view !== 'group');
       drawMatrixTable();
     })
   );
@@ -921,6 +1063,7 @@ async function renderAccess() {
     matrixState.filter = event.target.value;
     drawMatrixTable();
   });
+  $('#js-add-group-btn').addEventListener('click', openAddGroupModal);
   drawMatrixTable();
 }
 

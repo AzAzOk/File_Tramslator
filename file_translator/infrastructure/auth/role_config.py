@@ -430,12 +430,21 @@ class GrantStore(_CachedStore):
 
         ``subjects_by_type`` maps subject_type (group/role/user) to a list of
         subject identifiers; a grant matches when its type+subject pair appears.
+        AD group names are compared case-insensitively (`casefold`), because a
+        grant may store a different spelling of the group name than the one the
+        login reported; roles and users keep their exact match.
         """
         all_grants = await self._ensure_loaded()
+        group_candidates = {s.casefold() for s in subjects_by_type.get(SUBJECT_GROUP) or []}
         matched: list[GrantDoc] = []
         for g in all_grants:
             candidates = subjects_by_type.get(g.subject_type) or []
-            if g.subject in candidates:
+            if not candidates:
+                continue
+            if g.subject_type == SUBJECT_GROUP:
+                if g.subject.casefold() in group_candidates:
+                    matched.append(g)
+            elif g.subject in candidates:
                 matched.append(g)
         return matched
 
