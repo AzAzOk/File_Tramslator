@@ -17,16 +17,29 @@ also vendors its Tailwind build - hence the generated, dependency-free output.
 Run after changing any class in ``index.html`` / ``app.js`` / ``styles.css``:
 
     python tools/gen_admin_tailwind.py
+
+Pass an output directory to write the two files elsewhere, which the coverage
+check uses to diff the committed assets against a fresh build:
+
+    python tools/gen_admin_tailwind.py <out-dir>
 """
 import re
+import sys
 from pathlib import Path
+
+from css_class_harvest import MARKER_CLASSES, css_escape, harvest_class_tokens
 
 ROOT = Path(__file__).resolve().parents[1]
 ADMIN = ROOT / "admin_service" / "static"
 SRC = ROOT / "static" / "tailwind.css"  # the main app's generated Tailwind build
 MAIN_HTML = ROOT / "static" / "index.html"  # source of truth for the tokens
-DST = ADMIN / "tailwind.css"
-TOKENS_DST = ADMIN / "tokens.css"
+
+# Default output is the committed admin static dir; an argv override lets the
+# coverage check rebuild into a temp directory without touching the working tree.
+_OUT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ADMIN
+_OUT.mkdir(parents=True, exist_ok=True)
+DST = _OUT / "tailwind.css"
+TOKENS_DST = _OUT / "tokens.css"
 
 TOKEN_PREFIX = "--c-"
 TOKEN_RE = re.compile(rf"({re.escape(TOKEN_PREFIX)}[A-Za-z0-9-]+)\s*:\s*([^;]+);")
@@ -92,18 +105,14 @@ custom_css = (ADMIN / "styles.css").read_text(encoding="utf-8")
 
 tokens: set[str] = set()
 for blob in sources:
-    for match in re.finditer(r'class="([^"]*)"', blob):
-        tokens.update(t for t in match.group(1).split() if t and "${" not in t and not t.startswith("js-"))
+    tokens |= harvest_class_tokens(blob)
 
-# Component classes live in styles.css; `dark` is a state hook, not a utility.
+# Component classes live in styles.css; marker/state hooks carry no rule of their own.
 custom = set(re.findall(r"\.([A-Za-z][A-Za-z0-9_-]*)\s*[,{]", custom_css))
-custom |= {"dark", "matrix", "role-select"}
+custom |= MARKER_CLASSES | {"matrix", "role-select"}
 wanted = {t for t in tokens if t not in custom}
 
-
-def escape(name: str) -> str:
-    """Escape a class name for use in a CSS selector."""
-    return "".join(ch if (ch.isalnum() or ch in "-_") else "\\" + ch for ch in name)
+escape = css_escape
 
 
 # ------------------------------------------------- semantic token utilities
@@ -181,7 +190,6 @@ for kind, prelude, body in blocks:
 # Layout utilities absent from the main app's build (Tailwind v3 defaults).
 SUPPLEMENT = """
 /* --- utilities absent from the main UI build (Tailwind v3 defaults) --- */
-.flex-wrap { flex-wrap: wrap; }
 .items-start { align-items: flex-start; }
 .gap-1\\.5 { gap: 0.375rem; }
 .mr-1 { margin-right: 0.25rem; }
@@ -207,12 +215,17 @@ SUPPLEMENT = """
 .font-\\[Space_Grotesk\\] { font-family: "Space Grotesk", ui-sans-serif, system-ui, sans-serif; }
 .font-\\[JetBrains_Mono\\] { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace; }
 
+@media (min-width: 640px) {
+  .sm\\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 @media (min-width: 768px) {
   .md\\:flex { display: flex; }
   .md\\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 @media (min-width: 1024px) {
   .lg\\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lg\\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .lg\\:col-span-2 { grid-column: span 2 / span 2; }
 }
 """
 

@@ -70,7 +70,7 @@
   <!-- `flex` is added by app.js on login (never via a media query: a responsive
        display rule would override `hidden` and show the shell next to the form) -->
   <div id="app-view" class="hidden min-h-screen">
-    <aside class="w-60 shrink-0 border-r border-outline-variant bg-surface p-4">
+    <aside id="sidebar" class="sidebar border-r border-outline-variant bg-surface p-4">
       <div class="px-2 pb-6">
         <div class="font-[Space_Grotesk] text-lg font-semibold text-on-surface">File Translator</div>
         <div class="text-xs text-on-surface-variant">Администрирование</div>
@@ -88,10 +88,15 @@
       </div>
     </aside>
 
-    <div class="flex-1 overflow-y-auto">
+    <div class="app-main">
       <header class="topbar">
-        <h2 id="page-title" class="font-[Space_Grotesk] text-lg font-semibold text-on-surface">Обзор</h2>
-        <div class="flex items-center gap-3 text-sm">
+        <div class="topbar-left">
+          <button id="nav-toggle" class="nav-toggle" type="button" aria-label="Меню" aria-expanded="false" aria-controls="sidebar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+          </button>
+          <h2 id="page-title" class="font-[Space_Grotesk] text-lg font-semibold text-on-surface">Обзор</h2>
+        </div>
+        <div class="topbar-tools flex items-center gap-3 text-sm">
           <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Переключить тему" title="Тема">
             <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                  stroke-linecap="round" aria-hidden="true">
@@ -124,12 +129,15 @@
     </div>
   </div>
 
+  <!-- Drawer scrim (narrow viewports only) -->
+  <div id="nav-scrim" class="nav-scrim hidden"></div>
+
   <!-- ============================ MODAL ============================ -->
-  <div id="modal-backdrop" class="modal-backdrop hidden">
+  <div id="modal-backdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1">
     <div class="modal-card">
       <div class="flex items-start justify-between">
         <h3 id="modal-title" class="font-[Space_Grotesk] text-lg font-semibold text-on-surface"></h3>
-        <button id="modal-close" class="text-on-surface-variant hover:text-on-surface" type="button">✕</button>
+        <button id="modal-close" class="text-on-surface-variant hover:text-on-surface" type="button" aria-label="Закрыть">✕</button>
       </div>
       <div id="modal-body" class="mt-4 max-h-[60vh] overflow-y-auto text-sm"></div>
       <div class="mt-6 flex justify-end gap-2">

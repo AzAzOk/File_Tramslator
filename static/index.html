@@ -66,6 +66,25 @@
     vertical-align: middle;
   }
 
+  /* ── Header / shell ──
+     The header row wraps instead of overflowing when the viewport is narrow or
+     the page is zoomed, so every control stays reachable. The auth-backdrop
+     canvas is decorative and must never widen the page. */
+  .app-header { min-height: 4rem; flex-wrap: wrap; row-gap: .5rem; column-gap: 1rem; }
+  #authBackdrop canvas { max-width: 100%; }
+
+  /* ── Icon-only controls ──
+     Accessible name comes from aria-label in the markup; these give every
+     icon-only button a >=32x32px hit target and centre the glyph. */
+  .remove-btn, .edit-entry-btn, .delete-entry-btn,
+  #glossaryModalClose, #glossaryImportClose, #loginModalClose {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2rem;
+    min-height: 2rem;
+  }
+
   /* ── Drop zone ── */
   .drop-zone { transition: border-color .2s, background .2s; }
   .drop-zone.drag-over {
@@ -147,10 +166,21 @@
   .nav-tab.inactive { color: var(--c-secondary); border-bottom-color: transparent; }
   .nav-tab.inactive:hover { color: var(--c-on-surface); }
 
-  /* ── Modal ── */
+  /* ── Modal ──
+     Contract: the overlay centres the dialog; the dialog is a flex column that
+     never exceeds the viewport, keeps its header and footer at full height, and
+     scrolls only its body. Without this a tall dialog is clipped on a short
+     window (see file-translator-ui). */
   .modal-overlay { animation: fadeIn .2s ease-out; }
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-  .modal-content { animation: scaleIn .2s ease-out; }
+  .modal-content {
+    display: flex;
+    flex-direction: column;
+    max-height: min(90vh, calc(100vh - 2rem));
+    animation: scaleIn .2s ease-out;
+  }
+  .modal-content > :not(.modal-body) { flex-shrink: 0; }
+  .modal-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
   @keyframes scaleIn { from { opacity: 0; transform: scale(.95); } to { opacity: 1; transform: scale(1); } }
 
   /* Auth backdrop fallback (when WebGL/THREE is unavailable) */
@@ -172,7 +202,7 @@
 
 <!-- ═══ Top Navigation ═══ -->
 <header class="bg-[var(--c-surface)] border-b border-[var(--c-outline-variant)] sticky top-0 z-50 transition-colors">
-  <div class="max-w-[1440px] mx-auto px-6 flex items-center justify-between h-16">
+  <div class="app-header max-w-[1440px] mx-auto px-6 flex items-center justify-between">
     <div class="flex items-center gap-3">
       <img src="screen.png" alt="File Translator" style="height:36px;width:auto;display:block;">
       <a href="/" class="no-underline text-inherit"><h1 class="font-display font-bold text-lg text-[var(--c-on-surface)]">File Translator</h1></a>
@@ -295,7 +325,7 @@
         <!-- Style -->
         <fieldset>
           <legend class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1.5">Стиль перевода</legend>
-          <div id="styleGroup" class="flex gap-2 p-1 bg-[var(--c-surface-container-low)] rounded-lg">
+          <div id="styleGroup" class="flex flex-wrap gap-2 p-1 bg-[var(--c-surface-container-low)] rounded-lg">
             <button data-style="TECHNICAL" class="style-btn active flex-1 py-2 text-sm rounded-md border border-transparent">Технический</button>
             <button data-style="LEGAL" class="style-btn flex-1 py-2 text-sm rounded-md text-[var(--c-secondary)]">Юридический</button>
             <button data-style="MIXED" class="style-btn flex-1 py-2 text-sm rounded-md text-[var(--c-secondary)]">Смешанный</button>
@@ -423,7 +453,7 @@
 <footer class="bg-[var(--c-surface-container-low)] border-t border-[var(--c-outline-variant)] transition-colors mt-auto">
   <div class="max-w-[1440px] mx-auto px-6 py-5 flex flex-col md:flex-row items-center justify-between gap-3">
     <span class="font-mono-sm text-[var(--c-secondary)] text-xs">&copy; 2026 File Translator v2.0.0. ПАО ОНХП</span>
-    <div class="flex gap-6 text-xs text-[var(--c-on-surface-variant)]">
+    <div class="flex flex-wrap gap-6 text-xs text-[var(--c-on-surface-variant)]">
       <a href="http://issvm.onhp.local/onhp:file_translator" target="_blank" rel="noopener noreferrer" class="hover:text-[var(--c-primary)] transition-colors">Документация</a>
       <a href="/support.html" class="hover:text-[var(--c-primary)] transition-colors">Поддержка</a>
       <a href="/privacy.html" class="hover:text-[var(--c-primary)] transition-colors">Политика конфиденциальности</a>
@@ -441,7 +471,7 @@
         <span class="material-symbols-outlined" aria-hidden="true">close</span>
       </button>
     </div>
-    <div class="space-y-4">
+    <div class="space-y-4 modal-body">
       <div>
         <label for="glossaryFormRu" class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1">RU</label>
         <input id="glossaryFormRu" type="text" class="w-full bg-[var(--c-surface-container-low)] border-b-2 border-[var(--c-outline-variant)] focus:border-[var(--c-primary)] px-4 py-2.5 text-sm outline-none rounded-t transition-colors" placeholder="Русский">
@@ -463,7 +493,7 @@
     <div class="flex justify-end gap-3 mt-6">
       <button id="glossaryModalCancel" class="px-4 py-2 text-sm text-[var(--c-secondary)] hover:bg-[var(--c-surface-container-low)] rounded-lg transition-colors">Отмена</button>
       <button id="glossaryModalSave" class="px-4 py-2 bg-[var(--c-primary-container)] text-[var(--c-on-primary-container)] font-bold rounded-lg hover:brightness-95 transition-all active:scale-[0.97]">Сохранить</button>
-      <button id="glossaryModalSaveAnyway" class="px-4 py-2 bg-[var(--c-error)] text-white font-bold rounded-lg hover:brightness-95 transition-all active:scale-[0.97] hidden" title="Сохранить, игнорируя предупреждение о несовпадении языка. Проверка дубликатов всегда выполняется.">Сохранить всё равно</button>
+      <button id="glossaryModalSaveAnyway" class="px-4 py-2 bg-[var(--c-error)] text-[var(--c-inverse-on-surface)] font-bold rounded-lg hover:brightness-95 transition-all active:scale-[0.97] hidden" title="Сохранить, игнорируя предупреждение о несовпадении языка. Проверка дубликатов всегда выполняется.">Сохранить всё равно</button>
     </div>
   </div>
 </div>
@@ -478,7 +508,7 @@
         <span class="material-symbols-outlined" aria-hidden="true">close</span>
       </button>
     </div>
-    <div class="space-y-4">
+    <div class="space-y-4 modal-body">
       <div>
         <label class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1">Коллекция</label>
         <select id="importCollectionSelect" class="w-full bg-[var(--c-surface-container-low)] border-b-2 border-[var(--c-outline-variant)] focus:border-[var(--c-primary)] px-4 py-2.5 text-sm outline-none rounded-t transition-colors">
@@ -499,16 +529,16 @@
 </div>
 
 <!-- ═══ Login Modal ═══ -->
-<div id="loginModal" class="modal-overlay fixed inset-0 z-50 flex items-center justify-center hidden">
+<div id="loginModal" class="modal-overlay fixed inset-0 z-50 flex items-center justify-center hidden" role="dialog" aria-modal="true" aria-labelledby="loginModalTitle">
   <div id="authBackdrop" class="absolute inset-0 pointer-events-none" aria-hidden="true"></div>
   <div class="modal-content relative z-10 bg-[var(--c-surface-container-lowest)] border border-[var(--c-outline-variant)] rounded-xl p-6 w-full max-w-sm mx-4 shadow-2xl">
     <div class="flex items-center justify-between mb-4">
-      <h3 class="font-display text-lg font-semibold text-[var(--c-on-surface)]">Вход</h3>
-      <button id="loginModalClose" class="p-1 rounded-full hover:bg-[var(--c-surface-container-low)] transition-colors text-[var(--c-secondary)]" >
+      <h3 id="loginModalTitle" class="font-display text-lg font-semibold text-[var(--c-on-surface)]">Вход</h3>
+      <button id="loginModalClose" class="p-1 rounded-full hover:bg-[var(--c-surface-container-low)] transition-colors text-[var(--c-secondary)]" type="button" aria-label="Закрыть" >
         <!-- <span class="material-symbols-outlined" aria-hidden="true">close</span> -->
       </button>
     </div>
-    <div class="space-y-4">
+    <div class="space-y-4 modal-body">
       <div>
         <label for="loginUsername" class="font-mono-sm text-[10px] text-[var(--c-secondary)] uppercase tracking-widest block mb-1">Имя пользователя</label>
         <input id="loginUsername" type="text" class="w-full bg-[var(--c-surface-container-low)] border-b-2 border-[var(--c-outline-variant)] focus:border-[var(--c-primary)] px-4 py-2.5 text-sm outline-none rounded-t transition-colors" placeholder="username" autocomplete="username">
@@ -573,6 +603,54 @@ const loginSubmit = document.getElementById('loginSubmit');
 const loginUsername = document.getElementById('loginUsername');
 const loginPassword = document.getElementById('loginPassword');
 const loginError = document.getElementById('loginError');
+
+// ── Dialog focus management ──
+// Keeps keyboard focus inside the open dialog, closes it on Escape, and returns
+// focus to the control that opened it. One dialog is tracked at a time; the
+// keydown handler traps Tab at both ends of the dialog's focusable controls.
+let _openDialog = null; // { el, opener, onEscape }
+
+function _dialogFocusables(el) {
+  const sel = 'button:not([disabled]), [href], input:not([disabled]), ' +
+    'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  return Array.from(el.querySelectorAll(sel))
+    .filter(n => n.getClientRects().length > 0 && !n.hasAttribute('data-autofocus-off'));
+}
+
+function showDialog(el, onEscape) {
+  _openDialog = { el, opener: document.activeElement, onEscape };
+  el.classList.remove('hidden');
+  const prefer = el.querySelector('input:not([type="hidden"]), select, textarea') ||
+    _dialogFocusables(el)[0] || el;
+  requestAnimationFrame(() => prefer.focus());
+}
+
+function hideDialog(el) {
+  el.classList.add('hidden');
+  if (_openDialog && _openDialog.el === el) {
+    const opener = _openDialog.opener;
+    _openDialog = null;
+    if (opener && typeof opener.focus === 'function' && document.contains(opener)) {
+      requestAnimationFrame(() => opener.focus());
+    }
+  }
+}
+
+document.addEventListener('keydown', function (e) {
+  const d = _openDialog;
+  if (!d) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    if (typeof d.onEscape === 'function') d.onEscape();
+    return;
+  }
+  if (e.key !== 'Tab') return;
+  const f = _dialogFocusables(d.el);
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}, true);
 
 // ── Auto-refresh interceptor ──
 // When a request gets 401, automatically refreshes the token and retries.
@@ -677,14 +755,13 @@ function openLoginModalAuto() {
   loginUsername.value = '';
   loginPassword.value = '';
   loginError.classList.add('hidden');
-  loginModal.classList.remove('hidden');
+  showDialog(loginModal, closeLoginModalIfAllowed);
   startAuthBackdrop();
-  setTimeout(() => loginUsername.focus(), 100);
 }
 
 // Silent close (no error reset) - used after auth restore on page load
 function closeLoginModalSilent() {
-  loginModal.classList.add('hidden');
+  hideDialog(loginModal);
   stopAuthBackdrop();
 }
 
@@ -711,14 +788,13 @@ loginBtn.addEventListener('click', () => {
   loginUsername.value = '';
   loginPassword.value = '';
   loginError.classList.add('hidden');
-  loginModal.classList.remove('hidden');
-  setTimeout(() => loginUsername.focus(), 100);
+  showDialog(loginModal, closeLoginModalIfAllowed);
 });
 
 function closeLoginModal() {
   // Если пользователь не вошёл — не закрываем модалку автоматически
   if (!isAuthenticated) return;
-  loginModal.classList.add('hidden');
+  hideDialog(loginModal);
   loginError.classList.add('hidden');
 }
 
@@ -770,7 +846,7 @@ loginSubmit.addEventListener('click', async () => {
     localStorage.setItem('refresh_token', refreshToken);
     isAuthenticated = true;
     // Close modal unconditionally after successful login
-    loginModal.classList.add('hidden');
+    hideDialog(loginModal);
     stopAuthBackdrop();
     await updateAuthUI();
     await loadCollections();
@@ -1175,6 +1251,12 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+// Attribute-safe variant for values placed inside a double-quoted attribute
+// (escapeHtml does not escape the quote character).
+function escapeAttr(str) {
+  return escapeHtml(str).replace(/"/g, '&quot;');
+}
+
 function getFileIcon(filename) {
   const ext = filename.split('.').pop().toLowerCase();
   if (['dxf', 'dwg'].includes(ext)) return 'draw';
@@ -1249,11 +1331,11 @@ function renderFiles() {
         <div class="flex items-center gap-3 min-w-0 flex-1">
           <span class="material-symbols-outlined text-[var(--c-primary)] shrink-0 file-icon" aria-hidden="true">${getFileIcon(f.name)}</span>
           <div class="min-w-0 flex-1">
-            <p class="text-sm font-semibold truncate">${escapeHtml(f.name)}</p>
+            <p class="text-sm font-semibold truncate" title="${escapeAttr(f.name)}">${escapeHtml(f.name)}</p>
             <p class="text-xs text-[var(--c-secondary)] file-status-text">${formatSize(f.size)}</p>
           </div>
         </div>
-        <button data-idx="${i}" class="remove-btn text-[var(--c-error)] hover:bg-[var(--c-error)]/10 p-1 rounded transition-colors shrink-0">
+        <button data-idx="${i}" class="remove-btn text-[var(--c-error)] hover:bg-[var(--c-error)]/10 p-1 rounded transition-colors shrink-0" aria-label="Удалить файл">
           <span class="material-symbols-outlined text-lg" aria-hidden="true">close</span>
         </button>
       </div>
@@ -1446,6 +1528,11 @@ async function restoreActiveJobs() {
     const toPoll = [];
     for (const job of jobs) {
       if (!job.job_id) continue;
+      // The personal panel shows only the caller's own jobs. A `system:manage`
+      // account's `GET /jobs` still returns everyone's jobs (the admin service
+      // uses that as its monitoring feed), so filter them out here — otherwise
+      // another person's document would appear as if it were the caller's.
+      if (currentUser && currentUser.user_id && job.user_id && job.user_id !== currentUser.user_id) continue;
       if (['failed', 'cancelled'].includes(job.status)) continue;
       const isCompleted = job.status === 'completed';
       activeJobs[job.job_id] = {
@@ -1869,12 +1956,12 @@ function updateActiveJobsPanel() {
         <!-- Progress fill - fills from right to left, pale yellow -->
         <div         id="progress-fill-${jobId}" class="absolute inset-y-0 left-0 transition-all duration-500 ease-out" style="width: 0%; background: color-mix(in srgb, var(--c-primary-container) 22%, transparent);"></div>
         <!-- Action buttons -->
-        <button id="cancel-btn-${jobId}" class="cancel-btn absolute top-1.5 right-2 z-20 w-5 h-5 flex items-center justify-center rounded-full text-xs border border-[var(--c-outline)] text-[var(--c-on-surface-variant)] hover:bg-[var(--c-surface-container-highest)] active:scale-90 transition-all leading-none hidden" title="Отменить">✕</button>
+        <button id="cancel-btn-${jobId}" class="cancel-btn absolute top-1.5 right-2 z-20 w-8 h-8 flex items-center justify-center rounded-full text-xs border border-[var(--c-outline)] text-[var(--c-on-surface-variant)] hover:bg-[var(--c-surface-container-highest)] active:scale-90 transition-all leading-none hidden" title="Отменить" aria-label="Отменить задачу">✕</button>
         <!-- Content sits on top of the fill -->
-        <div class="relative z-10 flex items-center justify-between pr-7">
+        <div class="relative z-10 flex items-center justify-between pr-10">
           <div class="flex items-center gap-2 min-w-0 flex-1">
             <span class="material-symbols-outlined text-[var(--c-primary)] text-sm shrink-0" aria-hidden="true">description</span>
-            <p class="text-xs font-medium truncate">${escapeHtml(job.filename || 'Документ')}</p>
+            <p class="text-xs font-medium truncate" title="${escapeAttr(job.filename || 'Документ')}">${escapeHtml(job.filename || 'Документ')}</p>
           </div>
           <div id="status-${jobId}" class="shrink-0 ml-2"></div>
         </div>`;
@@ -2216,9 +2303,9 @@ function renderGlossary(filter) {
       '<td class="px-4 py-3 text-sm">' + hl(e.sb_word) + '</td>' +
       '<td class="px-4 py-3 text-sm">' + hl(e.ch_word) + '</td>' +
       '<td class="px-4 py-3 text-right whitespace-nowrap">' +
-      '<button data-id="' + e.id + '" class="edit-entry-btn p-1 rounded text-[var(--c-secondary)] hover:text-[var(--c-primary)] hover:bg-[var(--c-surface-container-low)] transition-all" title="Редактировать">' +
+      '<button data-id="' + e.id + '" class="edit-entry-btn p-1 rounded text-[var(--c-secondary)] hover:text-[var(--c-primary)] hover:bg-[var(--c-surface-container-low)] transition-all" title="Редактировать" aria-label="Редактировать запись">' +
       '<span class="material-symbols-outlined text-lg" aria-hidden="true">edit</span></button>' +
-      '<button data-id="' + e.id + '" class="delete-entry-btn p-1 rounded text-[var(--c-secondary)] hover:text-[var(--c-error)] hover:bg-[var(--c-error)]/10 transition-all" title="Удалить">' +
+      '<button data-id="' + e.id + '" class="delete-entry-btn p-1 rounded text-[var(--c-secondary)] hover:text-[var(--c-error)] hover:bg-[var(--c-error)]/10 transition-all" title="Удалить" aria-label="Удалить запись">' +
       '<span class="material-symbols-outlined text-lg" aria-hidden="true">delete</span></button>' +
       '</td></tr>';
   }).join('');
@@ -2264,11 +2351,11 @@ function openGlossaryModal(id) {
     sb.value = '';
     ch.value = '';
   }
-  document.getElementById('glossaryModal').classList.remove('hidden');
+  showDialog(document.getElementById('glossaryModal'), closeGlossaryModal);
 }
 
 function closeGlossaryModal() {
-  document.getElementById('glossaryModal').classList.add('hidden');
+  hideDialog(document.getElementById('glossaryModal'));
   document.getElementById('glossaryModalSaveAnyway').classList.add('hidden');
   editingEntryId = null;
 }
@@ -2397,11 +2484,11 @@ function openImportModal() {
   select.value = currentGlossaryCollection || '';
   document.getElementById('importFileInput').value = '';
   document.getElementById('importFormError').classList.add('hidden');
-  document.getElementById('glossaryImportModal').classList.remove('hidden');
+  showDialog(document.getElementById('glossaryImportModal'), closeImportModal);
 }
 
 function closeImportModal() {
-  document.getElementById('glossaryImportModal').classList.add('hidden');
+  hideDialog(document.getElementById('glossaryImportModal'));
 }
 
 document.getElementById('importGlossaryBtn').addEventListener('click', openImportModal);
