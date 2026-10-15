@@ -138,3 +138,62 @@ def test_list_jobs_scoped_to_caller(make_client, monkeypatch):
     admin = make_client(_credentials(RoleType.ADMIN))
     admin_ids = {j["job_id"] for j in admin.get("/jobs").json()}
     assert admin_ids == {"j-own", "j-other"}
+
+
+# ---------------------------------------------------------------------------
+# Internal jobs feed (change: admin-job-monitoring, task 5.1)
+# ---------------------------------------------------------------------------
+def _install_internal_feed(monkeypatch, token: str, jobs: list[Job]) -> None:
+    monkeypatch.setattr(api_app, "INTERNAL_API_TOKEN", token)
+    monkeypatch.setattr(
+        api_app, "translation_service", SimpleNamespace(job_manager=FakeJobManager(jobs))
+    )
+
+
+def test_internal_jobs_feed_requires_the_shared_token(make_client, monkeypatch):
+    _install_internal_feed(monkeypatch, "secret-token", [Job(job_id="j-1", user_id="u-1")])
+    client = make_client(_credentials(RoleType.VIEWER))
+
+    assert client.get("/internal/jobs").status_code == 401
+    assert (
+        client.get("/internal/jobs", headers={"X-Internal-Token": "wrong"}).status_code
+        == 401
+    )
+
+
+def test_internal_jobs_feed_returns_display_fields(make_client, monkeypatch):
+    jobs = [
+        Job(
+            job_id="j-1",
+            user_id="u-1",
+            filename="Договор.docx",
+            created_at="2026-01-01T00:00:00+00:00",
+        ),
+        Job(job_id="j-2", user_id="u-2", filename="README"),
+    ]
+    _install_internal_feed(monkeypatch, "secret-token", jobs)
+    client = make_client(_credentials(RoleType.VIEWER))
+
+    body = client.get(
+        "/internal/jobs", headers={"X-Internal-Token": "secret-token"}
+    ).json()
+    by_id = {j["job_id"]: j for j in body}
+
+    assert by_id["j-1"]["user_id"] == "u-1"
+    assert by_id["j-1"]["filename"] == "Договор.docx"
+    assert by_id["j-1"]["format"] == "DOCX"  # upper-cased extension
+    assert by_id["j-1"]["status"] == "pending"
+    assert by_id["j-1"]["created_at"] == "2026-01-01T00:00:00+00:00"
+    assert by_id["j-2"]["format"] == ""  # no extension → blank
+    # Read-only: the feed exposes no result path or file contents.
+    assert "output_file_path" not in by_id["j-1"]
+
+
+def test_internal_jobs_feed_refuses_when_token_not_configured(make_client, monkeypatch):
+    _install_internal_feed(monkeypatch, "", [Job(job_id="j-1")])
+    client = make_client(_credentials(RoleType.VIEWER))
+
+    assert (
+        client.get("/internal/jobs", headers={"X-Internal-Token": "anything"}).status_code
+        == 503
+    )
