@@ -260,13 +260,15 @@ class FakeSessionRepository:
 
 
 class FakeHttpResponse:
-    def __init__(self, status_code: int = 200, body: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, status_code: int = 200, body: dict[str, Any] | list[Any] | None = None
+    ) -> None:
         self.status_code = status_code
         self._body = body if body is not None else {}
         self.content = b"{}" if body is not None else b""
         self.text = "" if body is not None else "boom"
 
-    def json(self) -> dict[str, Any]:
+    def json(self) -> Any:
         return self._body
 
 
@@ -277,12 +279,23 @@ class FakeHttpClient:
         self.calls: list[str] = []
         self.response = response or FakeHttpResponse(200, {"cancelled": 1, "removed": 2})
         self.raise_error: Exception | None = None
+        #: GET (monitoring feed) side: request log + canned response.
+        self.get_calls: list[tuple[str, dict[str, Any] | None]] = []
+        self.get_response = FakeHttpResponse(200, [])
 
     async def post(self, url: str) -> FakeHttpResponse:
         self.calls.append(url)
         if self.raise_error is not None:
             raise self.raise_error
         return self.response
+
+    async def get(
+        self, url: str, params: dict[str, Any] | None = None
+    ) -> FakeHttpResponse:
+        self.get_calls.append((url, params))
+        if self.raise_error is not None:
+            raise self.raise_error
+        return self.get_response
 
 
 def make_user(
@@ -1362,6 +1375,143 @@ def test_dashboard_shows_counters_and_audit(auth_client: TestClient):
     assert body["counts"]["users"] == 3
     assert body["counts"]["manual_roles"] == 2
     assert body["recent_events"]
+
+
+# --- Job monitoring feed (change: admin-job-monitoring, task 5.2) ----------
+
+
+def test_jobs_feed_requires_a_session(client: TestClient):
+    assert client.get("/api/jobs").status_code == 401
+
+
+def test_jobs_feed_enriches_owner_and_maps_display_fields(
+    auth_client: TestClient, http_client: FakeHttpClient
+):
+    http_client.get_response = FakeHttpResponse(
+        200,
+        [
+            {
+                "job_id": "j-1",
+                "user_id": "u-1",
+                "filename": "Договор.docx",
+                "format": "DOCX",
+                "status": "completed",
+                "current_stage": "completed",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "started_at": "",
+                "completed_at": "",
+            }
+        ],
+    )
+    body = auth_client.get("/api/jobs").json()
+
+    assert body["available"] is True
+    assert http_client.get_calls == [("/internal/jobs", {"limit": 50})]
+    job = body["jobs"][0]
+    assert job["owner"] == "ivanov"  # u-1 resolved from the admin store
+    assert job["filename"] == "Договор.docx"
+    assert job["format"] == "DOCX"
+    assert job["status"] == "completed"
+    # Read-only: the block carries no result path or download affordance.
+    assert "output_file_path" not in job
+
+
+def test_jobs_feed_owner_falls_back_to_the_raw_id(
+    auth_client: TestClient, http_client: FakeHttpClient
+):
+    http_client.get_response = FakeHttpResponse(
+        200,
+        [{"job_id": "j-9", "user_id": "ghost", "filename": "x.pdf", "format": "PDF", "status": "failed"}],
+    )
+    body = auth_client.get("/api/jobs").json()
+    assert body["jobs"][0]["owner"] == "ghost"
+
+
+def test_jobs_feed_degrades_when_the_main_api_is_unreachable(
+    auth_client: TestClient, http_client: FakeHttpClient
+):
+    http_client.raise_error = httpx.ConnectError("no route")
+    body = auth_client.get("/api/jobs").json()
+    assert body == {"available": False, "jobs": []}
+
+
+def test_jobs_feed_degrades_on_a_main_api_error_status(
+    auth_client: TestClient, http_client: FakeHttpClient
+):
+    http_client.get_response = FakeHttpResponse(503)
+    body = auth_client.get("/api/jobs").json()
+    assert body == {"available": False, "jobs": []}
+
+
+# --- Monitoring history (change: job-monitoring-history, task 6.1) ---------
+
+
+def test_monitoring_history_requires_a_session(client: TestClient):
+    assert client.get("/api/monitoring/history").status_code == 401
+
+
+def test_monitoring_history_enriches_owner_and_maps_fields(
+    auth_client: TestClient, http_client: FakeHttpClient
+):
+    http_client.get_response = FakeHttpResponse(
+        200,
+        [
+            {
+                "job_id": "j-1",
+                "owner_id": "u-1",
+                "filename": "Договор.docx",
+                "format": "DOCX",
+                "status": "completed",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+            }
+        ],
+    )
+    body = auth_client.get("/api/monitoring/history").json()
+
+    assert body["available"] is True
+    assert http_client.get_calls == [("/internal/monitoring", {"limit": 100})]
+    entry = body["entries"][0]
+    assert entry["owner"] == "ivanov"  # u-1 resolved from the admin store
+    assert entry["filename"] == "Договор.docx"
+    assert entry["format"] == "DOCX"
+    assert entry["status"] == "completed"
+    assert entry["timestamp"] == "2026-01-01T00:00:00+00:00"
+    # Read-only: no download affordance leaks through from the main API.
+    assert "output_file_path" not in entry
+
+
+def test_monitoring_history_owner_falls_back_to_the_raw_id(
+    auth_client: TestClient, http_client: FakeHttpClient
+):
+    http_client.get_response = FakeHttpResponse(
+        200,
+        [{"job_id": "j-9", "owner_id": "ghost", "status": "failed"}],
+    )
+    body = auth_client.get("/api/monitoring/history").json()
+    assert body["entries"][0]["owner"] == "ghost"
+
+
+def test_monitoring_history_forwards_the_limit(
+    auth_client: TestClient, http_client: FakeHttpClient
+):
+    auth_client.get("/api/monitoring/history?limit=250")
+    assert http_client.get_calls == [("/internal/monitoring", {"limit": 250})]
+
+
+def test_monitoring_history_degrades_when_the_main_api_is_unreachable(
+    auth_client: TestClient, http_client: FakeHttpClient
+):
+    http_client.raise_error = httpx.ConnectError("no route")
+    body = auth_client.get("/api/monitoring/history").json()
+    assert body == {"available": False, "entries": []}
+
+
+def test_monitoring_history_degrades_on_a_main_api_error_status(
+    auth_client: TestClient, http_client: FakeHttpClient
+):
+    http_client.get_response = FakeHttpResponse(503)
+    body = auth_client.get("/api/monitoring/history").json()
+    assert body == {"available": False, "entries": []}
 
 
 def test_audit_failure_does_not_break_mutation(auth_client: TestClient, event_repository, monkeypatch):

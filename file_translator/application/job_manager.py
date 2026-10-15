@@ -9,6 +9,7 @@ from typing import Any
 
 from file_translator.domain.interfaces import JobRepository
 from file_translator.domain.job import Job, JobStatus, ProcessingStage
+from file_translator.domain.monitoring import derive_format
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +21,13 @@ class JobManager:
     - Tracks progress through processing stages
     - Supports cancellation (graceful stop at next safe point)
     - Provides status, progress, and ETA queries
+    - Records status transitions to an optional durable monitoring log
     """
     
-    def __init__(self, repository: JobRepository | None = None):
+    def __init__(self, repository: JobRepository | None = None,
+                 monitoring_service: Any | None = None):
         self._repository = repository
+        self._monitoring = monitoring_service
     
     @property
     def repository(self) -> JobRepository:
@@ -31,6 +35,25 @@ class JobManager:
         if not self._repository:
             raise RuntimeError("JobRepository is not configured")
         return self._repository
+
+    async def _log_transition(self, job: Job, status: JobStatus) -> None:
+        """Best-effort monitoring-log write. Never fails the job.
+
+        The monitoring service swallows its own errors, but a replacement
+        service could raise — so the call is guarded here too.
+        """
+        if self._monitoring is None:
+            return
+        try:
+            await self._monitoring.log(
+                job_id=job.job_id,
+                status=status.value,
+                owner_id=job.user_id,
+                filename=job.filename,
+                format=derive_format(job.filename),
+            )
+        except Exception as e:
+            logger.warning(f"Monitoring log failed for job {job.job_id}: {e}")
     
     async def create_job(
         self,
@@ -53,6 +76,7 @@ class JobManager:
             created_at=datetime.now(timezone.utc).isoformat(),
         )
         await self.repository.create(job)
+        await self._log_transition(job, job.status)
         logger.info(f"Job created: {job.job_id} for {filename}")
         return job
     
@@ -65,6 +89,7 @@ class JobManager:
         job.started_at = datetime.now(timezone.utc).isoformat()
         job.current_stage = ProcessingStage.RECEIVED
         await self.repository.update(job)
+        await self._log_transition(job, job.status)
         return job
     
     async def update_progress(
@@ -114,6 +139,7 @@ class JobManager:
                 datetime.now(timezone.utc) - datetime.fromisoformat(job.started_at)
             ).total_seconds()
         await self.repository.update(job)
+        await self._log_transition(job, job.status)
         logger.info(f"Job completed: {job_id}")
         return job
     
@@ -128,6 +154,7 @@ class JobManager:
         job.error_message = error_message
         job.completed_at = datetime.now(timezone.utc).isoformat()
         await self.repository.update(job)
+        await self._log_transition(job, job.status)
         logger.info(f"Job failed: {job_id} - {error_message}")
         return job
     
@@ -146,6 +173,7 @@ class JobManager:
         job.status = JobStatus.CANCELLED
         job.completed_at = datetime.now(timezone.utc).isoformat()
         await self.repository.update(job)
+        await self._log_transition(job, job.status)
         logger.info(f"Job cancelled: {job_id}")
         return job
     

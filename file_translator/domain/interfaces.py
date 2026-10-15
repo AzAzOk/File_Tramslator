@@ -192,6 +192,35 @@ class JournalRepository(ABC):
         ...
 
 
+class MonitoringLogRepository(ABC):
+    """Abstract interface for the durable job-monitoring log storage.
+
+    Manages daily monitoring-log files with 30-day retention. A new log file is
+    created on the first write of each UTC day; a dedicated directory keeps the
+    monitoring log separate from the processing journal.
+    """
+
+    @abstractmethod
+    async def get_log(self, date: str) -> Any | None:
+        """Retrieve the monitoring log for a specific date (YYYY-MM-DD)."""
+        ...
+
+    @abstractmethod
+    async def save_entry(self, date: str, entry: Any) -> None:
+        """Append a monitoring entry for the given date."""
+        ...
+
+    @abstractmethod
+    async def list_dates(self) -> list[str]:
+        """List all dates that have monitoring entries (newest first)."""
+        ...
+
+    @abstractmethod
+    async def delete_older_than(self, days: int) -> int:
+        """Delete monitoring files older than specified days. Returns count deleted."""
+        ...
+
+
 class JobRepository(ABC):
     """Abstract interface for job state storage.
     

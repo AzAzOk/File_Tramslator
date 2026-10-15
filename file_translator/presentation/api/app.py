@@ -56,6 +56,8 @@ from file_translator.application.schemas import (
     JournalEntrySchema,
     JournalResponseSchema,
     LoginRequestSchema,
+    MonitoredJobSchema,
+    MonitoringLogEntrySchema,
     RefreshTokenRequestSchema,
     RefreshTokenResponseSchema,
     TranslationRequestSchema,
@@ -368,6 +370,25 @@ async def _group_grant_sweep(interval: int = GROUP_GRANT_SWEEP_INTERVAL_SECONDS)
 
 # --- Periodic cleanup: temp dirs (1h TTL) + expired tokens ---
 
+async def _cleanup_monitoring_logs(interval: int = CLEANUP_INTERVAL_SECONDS) -> None:
+    """Background task that enforces durable monitoring-log retention.
+
+    The log files live under ``logs/monitoring`` and grow forever otherwise.
+    Cleanup runs on its own schedule so it does not depend on a translation
+    job being processed (unlike the journal's opportunistic cleanup).
+    """
+    while True:
+        try:
+            await asyncio.sleep(interval)
+            removed = await translation_service.monitoring_log_service.cleanup_old_logs()
+            if removed:
+                logger.info(f"Monitoring-log retention removed {removed} expired file(s)")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Monitoring log cleanup error: {e}")
+
+
 async def _cleanup_orphaned_temp_dirs(interval: int = CLEANUP_INTERVAL_SECONDS) -> None:
     """Background task that deletes orphaned temp dirs and stale terminal jobs.
 
@@ -496,6 +517,8 @@ async def _cleanup_orphaned_temp_dirs(interval: int = CLEANUP_INTERVAL_SECONDS) 
 async def _startup() -> None:
     # Start periodic cleanup
     asyncio.create_task(_cleanup_orphaned_temp_dirs())
+    # Durable monitoring-log retention, on its own schedule (not tied to a job)
+    asyncio.create_task(_cleanup_monitoring_logs())
 
     # Warn about missing required env vars
     if not DEFAULT_ADMIN_PASSWORD:
@@ -1710,6 +1733,57 @@ async def purge_user_jobs(
             f"Purged jobs for user {user_id}: {cancelled} cancelled, {removed} removed"
         )
     return {"cancelled": cancelled, "removed": removed}
+
+
+def _derive_format(filename: str) -> str:
+    """Return the upper-cased extension of a file name, or "" if it has none."""
+    suffix = Path(filename).suffix
+    return suffix.lstrip(".").upper() if suffix else ""
+
+
+@app.get("/internal/jobs", response_model=list[MonitoredJobSchema])
+async def list_internal_jobs(
+    limit: int = 50,
+    _: None = Depends(require_internal_token),
+) -> list[MonitoredJobSchema]:
+    """Read-only monitoring feed of recent jobs across all users.
+
+    Consumed by the admin service. It only reads the job manager and returns
+    display metadata — it never changes a job, cleans a temp dir, or exposes a
+    result file.
+    """
+    limit = max(1, min(limit, 200))
+    jobs = await translation_service.job_manager.get_recent_jobs(limit=limit)
+    return [
+        MonitoredJobSchema(
+            job_id=job.job_id,
+            user_id=job.user_id,
+            filename=job.filename,
+            format=_derive_format(job.filename),
+            status=job.status.value,
+            current_stage=job.current_stage.value,
+            created_at=job.created_at,
+            started_at=job.started_at,
+            completed_at=job.completed_at,
+        )
+        for job in jobs
+    ]
+
+
+@app.get("/internal/monitoring", response_model=list[MonitoringLogEntrySchema])
+async def list_internal_monitoring(
+    limit: int = 100,
+    _: None = Depends(require_internal_token),
+) -> list[MonitoringLogEntrySchema]:
+    """Read-only durable job-monitoring history, newest first.
+
+    Consumed by the admin service so its monitoring block survives the live job
+    store's short retention. It only reads the monitoring log — it never
+    changes, cancels, downloads, or deletes a job.
+    """
+    limit = max(1, min(limit, 500))
+    entries = await translation_service.monitoring_log_service.get_recent_entries(limit=limit)
+    return [MonitoringLogEntrySchema(**entry.to_dict()) for entry in entries]
 
 
 # ── Feedback / Support ──

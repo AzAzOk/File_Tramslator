@@ -204,6 +204,36 @@ class JobStatusSchema(BaseModel):
     completed_at: str = ""
 
 
+class MonitoredJobSchema(BaseModel):
+    """Read-only job view served to the admin service's monitoring feed.
+
+    Deliberately narrower than ``JobStatusSchema``: it exposes the fields the
+    monitoring block needs (owner, file, format, status, timestamps) without
+    widening the public job contract.
+    """
+
+    job_id: str
+    user_id: str = ""
+    filename: str = ""
+    format: str = ""
+    status: str
+    current_stage: str = ""
+    created_at: str = ""
+    started_at: str = ""
+    completed_at: str = ""
+
+
+class MonitoringLogEntrySchema(BaseModel):
+    """One durable monitoring-log entry served to the admin service."""
+
+    job_id: str
+    owner_id: str = ""
+    filename: str = ""
+    format: str = ""
+    status: str
+    timestamp: str = ""
+
+
 class ValidationResultSchema(BaseModel):
     """Schema for a single validation result."""
     

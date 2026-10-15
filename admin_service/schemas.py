@@ -203,6 +203,48 @@ class DashboardOut(BaseModel):
     recent_events: list[AuditEvent] = []
 
 
+class MonitoredJob(BaseModel):
+    """One row of the read-only job monitoring block."""
+
+    job_id: str
+    #: The submitting user's name, resolved from the job's ``user_id``; falls
+    #: back to the raw id when the user record no longer exists.
+    owner: str = ""
+    created_at: str = ""
+    filename: str = ""
+    status: str = ""
+    format: str = ""
+
+
+class JobMonitoringOut(BaseModel):
+    """The monitoring feed plus a flag the block uses to explain an outage."""
+
+    #: False when the main API could not be reached, so the block shows an
+    #: "unavailable" message instead of a misleading empty list.
+    available: bool = True
+    jobs: list[MonitoredJob] = []
+
+
+class MonitoredLogEntry(BaseModel):
+    """One durable monitoring-history row (a recorded lifecycle transition)."""
+
+    job_id: str
+    #: The submitting user's name, resolved from the entry's ``owner_id``;
+    #: falls back to the raw id when the user record no longer exists.
+    owner: str = ""
+    timestamp: str = ""
+    filename: str = ""
+    status: str = ""
+    format: str = ""
+
+
+class MonitoringHistoryOut(BaseModel):
+    """Durable monitoring history plus a flag explaining a main-API outage."""
+
+    available: bool = True
+    entries: list[MonitoredLogEntry] = []
+
+
 class AdminGuideSection(BaseModel):
     """One heading of the rendered guide, as the navigation tree sees it."""
 

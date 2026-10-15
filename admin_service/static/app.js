@@ -52,6 +52,15 @@ function setVersion(version) {
 
 // ------------------------------------------------------------------ modal
 let modalSubmit = null;
+let modalOpener = null;
+
+function modalFocusables() {
+  const sel = 'button:not([disabled]), [href], input:not([disabled]), ' +
+    'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  return Array.from($('#modal-backdrop').querySelectorAll(sel))
+    .filter((n) => n.getClientRects().length > 0);
+}
+
 function openModal(title, bodyHtml, onConfirm, confirmLabel = 'Сохранить') {
   $('#modal-title').textContent = title;
   $('#modal-body').innerHTML = bodyHtml;
@@ -63,12 +72,38 @@ function openModal(title, bodyHtml, onConfirm, confirmLabel = 'Сохранит�
   document.body.style.overflow = 'hidden';
   $('#modal-body').scrollTop = 0;
   $('#modal-backdrop').classList.remove('hidden');
+  // Keep the caller's element so focus returns to it on close. A submit may
+  // replace the dialog in place, so only the first open records the opener.
+  if (!modalOpener) modalOpener = document.activeElement;
+  const focusables = modalFocusables();
+  const inBody = focusables.filter((n) => $('#modal-body').contains(n));
+  requestAnimationFrame(() => (inBody[0] || focusables[0] || $('#modal-backdrop')).focus());
 }
 function closeModal() {
   $('#modal-backdrop').classList.add('hidden');
   document.body.style.overflow = '';
   modalSubmit = null;
+  const opener = modalOpener;
+  modalOpener = null;
+  if (opener && typeof opener.focus === 'function' && document.contains(opener)) {
+    requestAnimationFrame(() => opener.focus());
+  }
 }
+// Escape closes, Tab stays inside the dialog (mirrors the main app contract).
+document.addEventListener('keydown', (e) => {
+  if ($('#modal-backdrop').classList.contains('hidden')) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeModal();
+    return;
+  }
+  if (e.key !== 'Tab') return;
+  const f = modalFocusables();
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}, true);
 $('#modal-close').addEventListener('click', closeModal);
 $('#modal-cancel').addEventListener('click', closeModal);
 $('#modal-backdrop').addEventListener('click', (e) => {
@@ -173,8 +208,25 @@ const PAGES = {
   settings: { title: 'Настройки', render: renderSettings },
 };
 
+let pageTeardown = null;
+
+// Runs and clears the current page's cleanup. Called before rendering another
+// page and when the app view is left, so a page's timers and listeners never
+// outlive the page that started them.
+function runPageTeardown() {
+  if (!pageTeardown) return;
+  const teardown = pageTeardown;
+  pageTeardown = null;
+  try {
+    teardown();
+  } catch {
+    /* a teardown must never break navigation */
+  }
+}
+
 async function navigate(page) {
   if (!PAGES[page]) page = 'dashboard';
+  runPageTeardown();
   state.page = page;
   $('#page-title').textContent = PAGES[page].title;
   document.querySelectorAll('.nav-item').forEach((b) =>
@@ -191,7 +243,10 @@ function statCard(label, value) {
 }
 
 async function renderDashboard() {
-  const data = await api('/api/dashboard');
+  const [data, jobsData] = await Promise.all([
+    api('/api/dashboard'),
+    api('/api/monitoring/history?limit=500').catch(() => ({ available: false, entries: [] })),
+  ]);
   setVersion(data.config_version);
   const c = data.counts || {};
   $('#page-body').innerHTML = `
@@ -214,21 +269,373 @@ async function renderDashboard() {
         <div class="mt-1 text-xs text-on-surface-variant">Меняется при каждом изменении ролей/грантов; main API подхватывает без перезапуска.</div>
       </div>
     </div>
-    <h3 class="mt-6 mb-2 text-sm font-medium text-on-surface">Последние события</h3>
-    <div class="table-wrap"><table class="data">
-      <thead><tr><th>Время</th><th>Кто</th><th>Действие</th><th>Объект</th><th>Детали</th></tr></thead>
-      <tbody>${(data.recent_events || [])
+    <div class="mt-6 grid items-start gap-4 lg:grid-cols-3">
+      <div class="lg:col-span-2">
+        <h3 class="mb-2 text-sm font-medium text-on-surface">Последние события</h3>
+        <div class="table-wrap"><table class="data">
+          <thead><tr><th>Время</th><th>Кто</th><th>Действие</th><th>Объект</th><th>Детали</th></tr></thead>
+          <tbody>${(data.recent_events || [])
+            .map(
+              (e) => `<tr>
+                <td class="text-on-surface-variant">${fmtTime(e.created_at)}</td>
+                <td>${esc(e.actor)}</td>
+                <td><span class="badge badge-accent">${esc(e.action)}</span></td>
+                <td class="text-on-surface-variant">${esc(e.target_type)} ${esc(e.target)}</td>
+                <td class="font-[JetBrains_Mono] text-xs text-on-surface-variant">${esc(JSON.stringify(e.details || {}))}</td>
+              </tr>`
+            )
+            .join('') || '<tr><td colspan="5" class="text-on-surface-variant">Событий пока нет</td></tr>'}</tbody>
+        </table></div>
+      </div>
+      <div class="card p-4">
+        <div class="mb-3 flex items-center justify-between gap-2">
+          <div class="text-sm font-medium text-on-surface">Мониторинг задач</div>
+          <div class="flex items-center gap-2">
+            <span id="jobs-updated" class="text-xs text-on-surface-variant"></span>
+            <button class="btn" type="button" id="jobs-refresh">Обновить</button>
+          </div>
+        </div>
+        <div id="jobs-body"></div>
+      </div>
+    </div>`;
+  $('#jobs-refresh').addEventListener('click', () => scheduleJobsRefresh(0));
+  initJobMonitoring(jobsData);
+  pageTeardown = startJobAutoRefresh();
+}
+
+// ------------------------------------------------------- job monitoring
+// The block is fed by the durable job-monitoring history (`/api/monitoring/history`),
+// which carries owner/time/file/status/format for every recorded lifecycle
+// transition — so jobs already removed from the live store are still listed.
+// Entries arrive newest-first; the block folds them to the latest record per
+// job, then presents a bounded window (most recent 100, or all since 00:00 UTC).
+// Filtering and ordering happen here over the fetched window; nothing here can
+// change a job.
+const JOB_STATUS_LABELS = {
+  pending: 'В очереди',
+  running: 'Выполняется',
+  completed: 'Завершено',
+  failed: 'Ошибка',
+  cancelled: 'Отменено',
+};
+const JOB_STATUS_BADGES = {
+  pending: 'badge-info',
+  running: 'badge-accent',
+  completed: 'badge-success',
+  failed: 'badge-danger',
+  cancelled: 'badge-neutral',
+};
+
+// Bounded-window choices: the most recent N entries, or everything since the
+// current UTC day's 00:00 (00:00 UTC = 06:00 Omsk). Deliberately UTC to match
+// the daily rotation of the log files themselves.
+const MONITOR_RANGE_RECENT = 'recent';
+const MONITOR_RANGE_TODAY = 'today';
+const MONITOR_RECENT_LIMIT = 100;
+
+let monitorHistory = null; // null = never loaded; [] = loaded, empty
+let monitorRange = MONITOR_RANGE_RECENT;
+let monitorNewestFirst = true;
+let monitorLoaded = false; // became true once a load succeeded
+let monitorStale = false; // last refresh failed, or the feed is unavailable
+let monitorLastUpdated = 0; // epoch ms of the last successful load
+let monitorDataSignature = null; // signature of the rows currently in the DOM
+let monitorInFlight = false; // at most one history request at a time
+let monitorTimer = null; // pending refresh setTimeout id
+let monitorTicker = null; // 1 s ticker driving the «updated N s ago» label
+let monitorFailureCount = 0; // consecutive failures, for the backoff schedule
+
+const JOBS_REFRESH_MS = 5000;
+const JOBS_MAX_BACKOFF_MS = 60000;
+const JOBS_TICK_MS = 1000;
+
+function jobStatusBadge(status) {
+  const cls = JOB_STATUS_BADGES[status] || 'badge-neutral';
+  const label = JOB_STATUS_LABELS[status] || status || '—';
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+}
+
+// Collapses an append-only, newest-first entry list to the latest record per
+// job. The first entry seen for a job_id is its most recent transition, so a
+// job that went pending→running→completed shows only its completed row.
+function foldLatestPerJob(entries) {
+  const seen = new Set();
+  const latest = [];
+  for (const e of entries || []) {
+    const id = e.job_id;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    latest.push(e);
+  }
+  return latest;
+}
+
+// Filters entries to the current UTC day (>= 00:00 UTC). Entries with no
+// parseable timestamp are dropped rather than silently shown as timeless.
+function entriesSinceUtcMidnight(entries, now) {
+  const d = now ? new Date(now) : new Date();
+  const midnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  return (entries || []).filter((e) => {
+    const t = Date.parse(e.timestamp);
+    return Number.isFinite(t) && t >= midnight;
+  });
+}
+
+// The bounded window the block renders: latest-per-job, then either the most
+// recent N entries or all of today's, per the selected range.
+function visibleMonitorEntries(history, range, now) {
+  const folded = foldLatestPerJob(history);
+  if (range === MONITOR_RANGE_TODAY) return entriesSinceUtcMidnight(folded, now);
+  return folded.slice(0, MONITOR_RECENT_LIMIT);
+}
+
+// Builds the controls once, then paints the first payload. Called from
+// renderDashboard with the jobs data already fetched alongside the dashboard.
+function initJobMonitoring(data) {
+  if (data && data.available) {
+    monitorFailureCount = 0;
+    monitorStale = false;
+    monitorLastUpdated = Date.now();
+    applyJobData(data);
+  } else {
+    monitorHistory = null;
+    renderJobsUnavailable();
+  }
+  updateJobsIndicator();
+}
+
+// One-time construction of the range/filter controls, the sort toggle and the
+// table shell. A refresh never touches these nodes, so filter values, focus and
+// caret position survive every automatic reload by construction. The table lives
+// inside a bounded, scrollable container (design D9): the block never grows the
+// page without bound and a long history stays reachable by scrolling.
+function buildJobControls() {
+  const host = $('#jobs-body');
+  if (!host) return;
+  monitorDataSignature = null; // a fresh table must be written even if data is unchanged
+  host.innerHTML = `
+    <div class="mb-3 grid gap-2 sm:grid-cols-3">
+      <input type="search" class="input" id="jobs-filter-name" placeholder="Название файла…" />
+      <select class="input" id="jobs-filter-format"></select>
+      <select class="input" id="jobs-filter-status"></select>
+    </div>
+    <div class="mb-2 flex items-center justify-between gap-2">
+      <select class="input" id="jobs-range">
+        <option value="${MONITOR_RANGE_RECENT}">Последние ${MONITOR_RECENT_LIMIT}</option>
+        <option value="${MONITOR_RANGE_TODAY}">С 00:00 (UTC)</option>
+      </select>
+      <button class="btn" type="button" id="jobs-sort">${
+        monitorNewestFirst ? 'Сначала новые' : 'Сначала старые'
+      }</button>
+    </div>
+    <div class="table-wrap job-scroll"><table class="data">
+      <thead><tr><th>Кто</th><th>Когда</th><th>Название файла</th><th>Статус</th><th>Формат</th></tr></thead>
+      <tbody id="jobs-rows"></tbody>
+    </table></div>`;
+  $('#jobs-range').value = monitorRange;
+  $('#jobs-filter-name').addEventListener('input', () => renderJobRows(true));
+  $('#jobs-filter-format').addEventListener('change', () => renderJobRows(true));
+  $('#jobs-filter-status').addEventListener('change', () => renderJobRows(true));
+  $('#jobs-range').addEventListener('change', () => {
+    monitorRange = $('#jobs-range').value;
+    renderJobRows(true);
+  });
+  $('#jobs-sort').addEventListener('click', () => {
+    monitorNewestFirst = !monitorNewestFirst;
+    $('#jobs-sort').textContent = monitorNewestFirst ? 'Сначала новые' : 'Сначала старые';
+    renderJobRows(true);
+  });
+}
+
+function renderJobsUnavailable() {
+  const host = $('#jobs-body');
+  if (!host) return;
+  host.innerHTML =
+    '<div class="text-sm text-on-surface-variant">Сервис задач недоступен. Попробуйте позже.</div>';
+}
+
+function jobsSignature(entries) {
+  return (entries || [])
+    .map((e) => [e.job_id, e.status, e.owner, e.format, e.timestamp].join('|'))
+    .join('\n');
+}
+
+// Applies a successful payload: remember the entries, refresh the option lists,
+// then repaint the rows (skipped when the data did not change).
+function applyJobData(data) {
+  monitorLoaded = true;
+  monitorHistory = data.entries || [];
+  if (!$('#jobs-rows')) buildJobControls(); // recover from the unavailable state
+  rebuildJobFilterOptions();
+  renderJobRows(false);
+}
+
+// Rebuilds the <select> option lists from the latest data, re-selecting the
+// current value when it still exists so a refresh never resets a filter.
+function rebuildJobFilterOptions() {
+  const formatSel = $('#jobs-filter-format');
+  const statusSel = $('#jobs-filter-status');
+  if (!formatSel || !statusSel) return;
+  const entries = foldLatestPerJob(monitorHistory || []);
+
+  const keepFormat = formatSel.value;
+  const formats = Array.from(new Set(entries.map((e) => e.format).filter(Boolean))).sort();
+  formatSel.innerHTML =
+    '<option value="">Все форматы</option>' +
+    formats.map((f) => `<option value="${esc(f)}">${esc(f)}</option>`).join('');
+  formatSel.value = formats.includes(keepFormat) ? keepFormat : '';
+
+  const keepStatus = statusSel.value;
+  const present = new Set(entries.map((e) => e.status));
+  statusSel.innerHTML =
+    '<option value="">Все статусы</option>' +
+    Object.entries(JOB_STATUS_LABELS)
+      .filter(([value]) => present.has(value))
+      .map(([value, label]) => `<option value="${value}">${esc(label)}</option>`)
+      .join('');
+  statusSel.value = present.has(keepStatus) ? keepStatus : '';
+}
+
+// `force` repaints unconditionally (filter/sort/range changes). A refresh passes
+// false so an unchanged payload never rewrites the DOM, which would drop any
+// text selection the administrator has made. The rendered window is bounded:
+// latest-per-job, then the selected range (recent 100 or today).
+function renderJobRows(force) {
+  const body = $('#jobs-rows');
+  if (!body) return;
+  const windowed = visibleMonitorEntries(monitorHistory || [], monitorRange);
+  const signature = jobsSignature(windowed);
+  if (!force && signature === monitorDataSignature) return;
+  monitorDataSignature = signature;
+
+  const name = ($('#jobs-filter-name').value || '').trim().toLowerCase();
+  const format = $('#jobs-filter-format').value;
+  const status = $('#jobs-filter-status').value;
+  const rows = windowed
+    .filter((e) => {
+      if (name && !String(e.filename || '').toLowerCase().includes(name)) return false;
+      if (format && e.format !== format) return false;
+      if (status && e.status !== status) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const ta = Date.parse(a.timestamp) || 0;
+      const tb = Date.parse(b.timestamp) || 0;
+      return monitorNewestFirst ? tb - ta : ta - tb;
+    });
+  body.innerHTML = rows.length
+    ? rows
         .map(
           (e) => `<tr>
-            <td class="text-on-surface-variant">${fmtTime(e.created_at)}</td>
-            <td>${esc(e.actor)}</td>
-            <td><span class="badge badge-accent">${esc(e.action)}</span></td>
-            <td class="text-on-surface-variant">${esc(e.target_type)} ${esc(e.target)}</td>
-            <td class="font-[JetBrains_Mono] text-xs text-on-surface-variant">${esc(JSON.stringify(e.details || {}))}</td>
+            <td>${esc(e.owner) || '—'}</td>
+            <td class="text-on-surface-variant">${fmtTime(e.timestamp)}</td>
+            <td>${esc(e.filename) || '—'}</td>
+            <td>${jobStatusBadge(e.status)}</td>
+            <td class="text-on-surface-variant">${esc(e.format) || '—'}</td>
           </tr>`
         )
-        .join('') || '<tr><td colspan="5" class="text-on-surface-variant">Событий пока нет</td></tr>'}</tbody>
-    </table></div>`;
+        .join('')
+    : '<tr><td colspan="5" class="text-on-surface-variant">Задач нет</td></tr>';
+}
+
+// One shared refresh used by the timer, the manual button and the
+// visibility/online triggers. The in-flight guard keeps a click during a pending
+// refresh from firing a second concurrent request.
+async function refreshJobMonitoring() {
+  if (monitorInFlight) return;
+  monitorInFlight = true;
+  try {
+    const data = await api('/api/monitoring/history?limit=500');
+    if (data && data.available) {
+      monitorFailureCount = 0;
+      monitorStale = false;
+      monitorLastUpdated = Date.now();
+      applyJobData(data);
+    } else {
+      // Answered, but the main service is unreachable: keep the last good rows
+      // and flag them stale instead of emptying the block.
+      monitorFailureCount += 1;
+      monitorStale = true;
+    }
+  } catch {
+    monitorFailureCount += 1;
+    monitorStale = true;
+  } finally {
+    monitorInFlight = false;
+    updateJobsIndicator();
+  }
+}
+
+function nextJobsDelay() {
+  if (!monitorStale) return JOBS_REFRESH_MS;
+  const backoff = JOBS_REFRESH_MS * Math.pow(2, Math.max(0, monitorFailureCount - 1));
+  return Math.min(backoff, JOBS_MAX_BACKOFF_MS);
+}
+
+function stopJobsTimer() {
+  if (monitorTimer) {
+    clearTimeout(monitorTimer);
+    monitorTimer = null;
+  }
+}
+
+// The single scheduling point: drops any pending tick and arms a new one.
+function scheduleJobsRefresh(delay) {
+  stopJobsTimer();
+  monitorTimer = setTimeout(runJobsRefresh, delay);
+}
+
+async function runJobsRefresh() {
+  monitorTimer = null;
+  await refreshJobMonitoring();
+  if (document.hidden) return; // paused; the visible-again handler re-arms the tick
+  scheduleJobsRefresh(nextJobsDelay());
+}
+
+function updateJobsIndicator() {
+  const el = $('#jobs-updated');
+  if (!el) return;
+  if (monitorStale) {
+    el.textContent = monitorLoaded ? 'данные устарели' : '';
+    el.classList.toggle('text-error', monitorLoaded);
+    el.classList.toggle('text-on-surface-variant', !monitorLoaded);
+    return;
+  }
+  if (!monitorLastUpdated) {
+    el.textContent = '';
+    return;
+  }
+  const secs = Math.max(0, Math.round((Date.now() - monitorLastUpdated) / 1000));
+  el.textContent = secs < 5 ? 'обновлено только что' : `обновлено ${secs} сек назад`;
+  el.classList.remove('text-error');
+  el.classList.add('text-on-surface-variant');
+}
+
+// Starts the refresh lifecycle and returns its teardown. renderDashboard stores
+// the teardown so navigate() can stop the timer and drop the listeners the
+// moment the administrator leaves the Обзор page.
+function startJobAutoRefresh() {
+  const onVisibility = () => {
+    if (document.hidden) {
+      stopJobsTimer();
+    } else {
+      scheduleJobsRefresh(0);
+    }
+  };
+  const onOnline = () => scheduleJobsRefresh(0);
+  document.addEventListener('visibilitychange', onVisibility);
+  window.addEventListener('online', onOnline);
+  monitorTicker = setInterval(updateJobsIndicator, JOBS_TICK_MS);
+  scheduleJobsRefresh(JOBS_REFRESH_MS);
+  return () => {
+    document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('online', onOnline);
+    if (monitorTicker) {
+      clearInterval(monitorTicker);
+      monitorTicker = null;
+    }
+    stopJobsTimer();
+  };
 }
 
 // Right labels come from the service, next to the values they name: a right
@@ -1115,8 +1522,10 @@ async function renderSettings() {
 
 // -------------------------------------------------------------- session
 function showLogin() {
+  runPageTeardown();
+  closeNav();
   $('#app-view').classList.add('hidden');
-  $('#app-view').classList.remove('flex');
+  $('#app-view').classList.remove('shell-open');
   $('#login-view').classList.remove('hidden');
   $('#login-view').classList.add('flex');
   $('#login-error').classList.add('hidden');
@@ -1128,7 +1537,7 @@ async function showApp(username) {
   $('#login-view').classList.add('hidden');
   $('#login-view').classList.remove('flex');
   $('#app-view').classList.remove('hidden');
-  $('#app-view').classList.add('flex');
+  $('#app-view').classList.add('shell-open');
   if (!state.permissions.length) {
     try {
       state.permissions = await api('/api/roles/permissions-pool');
@@ -1176,12 +1585,39 @@ $('#theme-toggle').addEventListener('click', () => {
 
 document.querySelectorAll('.nav-item').forEach((btn) =>
   btn.addEventListener('click', () => {
+    closeNav();
     location.hash = btn.dataset.page;
   })
 );
 
 window.addEventListener('hashchange', () => {
   if (state.user) navigate(location.hash.replace('#', '') || 'dashboard');
+});
+
+// -------------------------------------------------------------- mobile drawer
+// The sidebar is an off-canvas drawer below the shell breakpoint. These helpers
+// are inert on wide viewports (the toggle and scrim are display:none there).
+function openNav() {
+  $('#sidebar').classList.add('open');
+  $('#nav-scrim').classList.remove('hidden');
+  $('#nav-toggle').setAttribute('aria-expanded', 'true');
+}
+function closeNav() {
+  const sidebar = $('#sidebar');
+  if (!sidebar) return;
+  sidebar.classList.remove('open');
+  $('#nav-scrim').classList.add('hidden');
+  const toggle = $('#nav-toggle');
+  if (toggle) toggle.setAttribute('aria-expanded', 'false');
+}
+function toggleNav() {
+  if ($('#sidebar').classList.contains('open')) closeNav();
+  else openNav();
+}
+$('#nav-toggle').addEventListener('click', toggleNav);
+$('#nav-scrim').addEventListener('click', closeNav);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeNav();
 });
 
 async function bootstrap() {

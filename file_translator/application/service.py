@@ -84,9 +84,11 @@ class TranslationService:
         self._glossary_service = glossary_service
         self._journal_service = journal_service
         self._job_manager = job_manager
+        self._monitoring_log_service = None  # lazy init
         self._validation_chain = validation_chain
         self._access_resolver = None  # shared Mongo-backed resolver (set at startup)
         self._init_lock = threading.Lock()
+        self._monitoring_lock = threading.Lock()
         self._async_init_lock = asyncio.Lock()
 
     def set_access_resolver(self, resolver: Any) -> None:
@@ -151,8 +153,27 @@ class TranslationService:
             if self._job_manager is None:
                 from file_translator.application.job_manager import JobManager
                 from file_translator.infrastructure.repositories.redis_job_repository import RedisJobRepository
-                self._job_manager = JobManager(repository=RedisJobRepository())
+                self._job_manager = JobManager(
+                    repository=RedisJobRepository(),
+                    monitoring_service=self.monitoring_log_service,
+                )
         return self._job_manager
+
+    @property
+    def monitoring_log_service(self) -> Any:
+        """Get the monitoring log service instance (lazy init)."""
+        if self._monitoring_log_service is not None:
+            return self._monitoring_log_service
+        with self._monitoring_lock:
+            if self._monitoring_log_service is None:
+                from file_translator.application.monitoring_log_service import MonitoringLogService
+                from file_translator.infrastructure.repositories.file_monitoring_repository import (
+                    FileMonitoringRepository,
+                )
+                self._monitoring_log_service = MonitoringLogService(
+                    repository=FileMonitoringRepository()
+                )
+        return self._monitoring_log_service
     
     @property
     def validation_chain(self) -> Any:

@@ -8,6 +8,58 @@
    hidden modal overlay would keep intercepting every click on the page. */
 .hidden { display: none !important; }
 
+/* ------------------------------------------------------- application shell
+   #app-view is revealed by app.js adding `.shell-open` (never a media query, so
+   a responsive display rule cannot override `.hidden` and show the shell beside
+   the login form). One column by default; at >=1024px a fixed-width sidebar
+   column sits beside the content. Below that the sidebar becomes an off-canvas
+   drawer opened from the topbar. */
+.shell-open { display: grid; grid-template-columns: minmax(0, 1fr); }
+.app-main { min-width: 0; overflow-y: auto; }
+.sidebar { min-width: 0; }
+
+.nav-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+  color: var(--c-on-surface-variant);
+}
+.nav-toggle:hover { background: var(--c-surface-container-high); color: var(--c-on-surface); }
+.nav-toggle svg { width: 1.25rem; height: 1.25rem; }
+
+.topbar-left { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.topbar-tools { flex-wrap: wrap; justify-content: flex-end; }
+
+.nav-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: color-mix(in srgb, var(--c-inverse-surface) 55%, transparent);
+}
+
+@media (min-width: 1024px) {
+  .shell-open { grid-template-columns: 15rem minmax(0, 1fr); }
+}
+@media (max-width: 1023.98px) {
+  .nav-toggle { display: inline-flex; }
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 40;
+    width: 15rem;
+    max-width: 80vw;
+    overflow-y: auto;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+  .sidebar.open { transform: translateX(0); }
+}
+
 /* ------------------------------------------------------------ left navigation */
 .nav-item {
   display: block;
@@ -45,6 +97,8 @@
   top: 0;
   z-index: 10;
   display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
   align-items: center;
   justify-content: space-between;
   padding: 0.75rem 1.5rem;
@@ -80,6 +134,15 @@
   overflow-x: auto;
   border-radius: 0.75rem;
   border: 1px solid var(--c-outline-variant);
+}
+
+/* Bounded, scrollable monitoring block (design D9): a long history stays
+   reachable by scrolling, the block never grows the page without bound, and
+   overflow-x stays contained so the page does not scroll sideways. */
+.job-scroll {
+  max-height: 24rem;
+  overflow-y: auto;
+  overflow-x: auto;
 }
 
 table.data {
@@ -205,6 +268,17 @@ table.data tbody tr:hover {
 .input:focus {
   border-color: var(--c-primary);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-primary) 25%, transparent);
+}
+/* Field label used by the access-matrix add-group dialog. Mirrors the
+   `mb-1 block text-xs uppercase tracking-wide text-on-surface-variant`
+   pattern the admin markup uses for every other field label. */
+.label {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  color: var(--c-on-surface-variant);
 }
 
 /* Access matrix: one column per collection, split by subject kind. The subject
@@ -343,11 +417,26 @@ table.data tbody tr:hover {
 .modal-card {
   width: 100%;
   max-width: 34rem;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 3rem);
   border-radius: 1rem;
   border: 1px solid var(--c-outline-variant);
   background: var(--c-surface-container-low);
   padding: 1.5rem;
   box-shadow: 0 25px 50px -12px color-mix(in srgb, var(--c-inverse-surface) 45%, transparent);
+}
+/* Header and footer keep their height; only the body scrolls. */
+.modal-card > :not(#modal-body) { flex-shrink: 0; }
+
+/* Icon-only close control: >=32x32px hit target, glyph centred. */
+#modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  min-height: 2rem;
+  border-radius: 0.5rem;
 }
 /* The dialog body is the scroll surface. `contain` stops the wheel from
    chaining to the page behind once the list hits an end (the page is also
@@ -355,6 +444,8 @@ table.data tbody tr:hover {
    Style the standard scrollbar and the WebKit one — Firefox takes the former,
    Chromium/WebKit the latter (round 10.3). */
 #modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--c-outline) transparent;
